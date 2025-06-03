@@ -1,0 +1,169 @@
+name: Build Corretto 21 (lilliput-2) for Windows
+
+on:
+  push:
+    branches: [ lilliput-2 ]
+
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Corretto source (lilliput-2 branch)
+        uses: actions/checkout@v4
+        with:
+          repository: corretto/corretto-21
+          ref: lilliput-2
+
+      - name: Set up Corretto 21 as Bootstrap JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21'
+          architecture: x64
+        id: setup-jdk
+
+      - name: Install Visual Studio Build Tools (C++ workload)
+        run: |
+          echo "Ensuring Visual Studio C++ workload is installed..."
+          & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart || `
+          & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "C:\Program Files\Microsoft Visual Studio\2022\Community" --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart || `
+          & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "C:\Program Files\Microsoft Visual Studio\2022\Professional" --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart || `
+          echo "Failed to find or modify VS installation via standard paths. Relying on pre-installed components."
+        shell: pwsh
+
+
+      - name: Install Cygwin with necessary packages
+        run: |
+          choco install cygwin --params "/InstallDir:C:\cygwin64 /NoAdmin" -y
+
+          $cygwinSetupPath = "C:\cygwin64\cygwinsetup.exe"
+
+          if (-not (Test-Path $cygwinSetupPath -PathType Leaf)) {
+            Write-Error "Cygwin setup executable ($cygwinSetupPath) not found even with the correct name!"
+            Write-Host "Listing contents of C:\cygwin64 again:"
+            Get-ChildItem -Path "C:\cygwin64" | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+            exit 1
+          }
+
+          $cygwinPackages = "make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake"
+          $cygwinMirror = "http://mirrors.kernel.org/sourceware/cygwin/"
+
+          Write-Host "Executing Cygwin setup ($cygwinSetupPath) to install packages..."
+          try {
+              Start-Process -FilePath $cygwinSetupPath -ArgumentList "-q -s $cygwinMirror -P $cygwinPackages" -Wait -NoNewWindow
+              Write-Host "Cygwin package installation command finished."
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Error "Cygwin setup ($cygwinSetupPath) exited with code $LASTEXITCODE."
+                  exit $LASTEXITCODE
+              }
+          }
+          catch {
+              Write-Error "Failed to start or execute '$cygwinSetupPath'. Error was: $($_.Exception.Message)"
+              exit 1
+          }
+
+          Write-Host "Adding Cygwin\bin to GITHUB_PATH for subsequent steps."
+          echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        shell: pwsh
+
+      - name: Configure Corretto Build
+        run: |
+          $BOOT_JDK_WINDOWS = $env:JAVA_HOME
+          Write-Host "JAVA_HOME environment variable value: $BOOT_JDK_WINDOWS"
+
+          if (-not $BOOT_JDK_WINDOWS) {
+              Write-Error "Bootstrap JDK path from JAVA_HOME environment variable is empty!"
+              Write-Host "Available Environment Variables:"
+              Get-ChildItem Env: | Sort-Object Name | Format-Table -Wrap
+              exit 1
+          }
+
+          try {
+              Get-Command cygpath -ErrorAction Stop | Out-Null
+              $BOOT_JDK_CYGWIN = & cygpath --unix $BOOT_JDK_WINDOWS
+          } catch {
+              Write-Error "cygpath command not found or failed to convert '$BOOT_JDK_WINDOWS'. Error: $($_.Exception.Message)"
+              Write-Host "Current PS Path: $env:Path"
+              exit 1
+          }
+
+          Write-Host "Using Bootstrap JDK (Windows path): $BOOT_JDK_WINDOWS"
+          Write-Host "Using Bootstrap JDK (Cygwin path): $BOOT_JDK_CYGWIN"
+
+          Write-Host "Running configure from PowerShell working directory: $(Get-Location)"
+          C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
+
+        shell: pwsh
+
+      - name: Build Corretto (make images)
+        run: |
+          Write-Host "Running make from PowerShell working directory: $(Get-Location)"
+          C:\cygwin64\bin\bash -c "make images"
+        shell: pwsh
+
+
+      - name: Clean Debug Symbols from JDK Image
+        run: |
+          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if ($jdkImagePath) {
+            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
+            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -Verbose
+            Write-Host "Debug symbol cleanup complete."
+          } else {
+            Write-Warning "Could not find JDK image directory under build/*/images/jdk to clean."
+          }
+        shell: pwsh
+
+      - name: Prepare Artifact Structure
+        id: prepare_artifact
+        run: |
+          $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $jdkSourcePath) {
+              Write-Error "Could not find source JDK image directory under build/*/images/jdk"
+              exit 1
+          }
+          Write-Host "Found JDK source path: $jdkSourcePath"
+
+          $releaseFile = Join-Path $jdkSourcePath "release"
+          if (-not (Test-Path $releaseFile)) {
+              Write-Error "Could not find release file at $releaseFile"
+              exit 1
+          }
+
+          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
+          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
+          if (-not $javaVersion) {
+              Write-Error "Could not parse JAVA_VERSION from $releaseFile"
+              exit 1
+          }
+          Write-Host "Extracted JAVA_VERSION: $javaVersion"
+
+          $stagingDir = "staging"
+          $targetDirName = "corretto-21-lilliput-${javaVersion}"
+          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
+
+          if (Test-Path $stagingDir) {
+              Remove-Item -Recurse -Force $stagingDir
+          }
+          New-Item -ItemType Directory -Path $stagingDir | Out-Null
+          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
+
+          Write-Host "Moving contents of $jdkSourcePath to $fullTargetPathInStaging"
+          Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
+
+          echo "TARGET_DIR_NAME=$targetDirName" >> $env:GITHUB_OUTPUT
+          echo "JAVA_VERSION=$javaVersion" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Artifact prepared in staging directory: $stagingDir"
+          Write-Host "Target directory name: $targetDirName"
+        shell: pwsh
+
+      - name: Upload Windows JDK Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION }}-windows-x64-jdk
+          path: staging/
