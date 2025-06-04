@@ -17,14 +17,13 @@ jobs:
   build_if_new_commits:
     runs-on: windows-latest
     permissions:
-      variables: write # Needed to update repository variables using 'gh'
+      actions: write # Changed from 'variables: write'. Needed for updating repo variables via API.
+      # contents: read # Default, needed for checkout actions if not checking out self
 
     steps:
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
-          # vars.GITHUB_VARIABLE_NAME will be empty if the variable doesn't exist.
-          # PowerShell treats an empty env var as $null or empty string.
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
           Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
@@ -34,7 +33,6 @@ jobs:
         id: get_upstream_sha
         run: |
           Write-Host "Fetching current SHA for ${{ env.UPSTREAM_REPO }}@${{ env.UPSTREAM_BRANCH }}"
-          # Perform a shallow clone to get the latest commit
           git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }}.git temp_upstream_checkout
           cd temp_upstream_checkout
           $current_sha = (git rev-parse HEAD).Trim()
@@ -50,7 +48,6 @@ jobs:
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
           $needs_build = "false"
-
           if ("${{ github.event_name }}" == "workflow_dispatch") {
             $needs_build = "true"
             Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
@@ -63,14 +60,14 @@ jobs:
           echo "needs_build=$needs_build" >> $GITHUB_OUTPUT
         shell: pwsh
 
-      # --- Conditional Build Steps Start Here ---
+      # --- Conditional Build Steps Start Here (Unchanged from your last version) ---
 
       - name: Checkout Corretto source (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ steps.get_upstream_sha.outputs.sha }} # Checkout the specific SHA decided
+          ref: ${{ steps.get_upstream_sha.outputs.sha }}
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
       - name: Set up Corretto 21 as Bootstrap JDK (if build is needed)
@@ -152,7 +149,7 @@ jobs:
       - name: Prepare Artifact Structure (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }} # Ensure this operates in the corretto source checkout
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
           if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory under build/*/images/jdk"; exit 1 }
@@ -163,15 +160,11 @@ jobs:
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
           if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION from $releaseFile"; exit 1 }
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
-
-          # Staging directory will be relative to GITHUB_WORKSPACE (default for steps)
-          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact" # Create it outside CORRETTO_SOURCE_DIR
+          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
           $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
-
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
           New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
-
           Write-Host "Moving contents of $jdkSourcePath to $fullTargetPathInStaging"
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
           Write-Host "Artifact prepared in staging directory: $stagingDir for JDK version $javaVersion"
@@ -182,15 +175,31 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
-          path: staging_artifact/ # Path relative to GITHUB_WORKSPACE
+          path: staging_artifact/
 
       - name: Update GitHub Repository Variable with New SHA (if build succeeded)
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GITHUB_TOKEN is automatically available
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $new_sha_to_save = "${{ steps.get_upstream_sha.outputs.sha }}"
-          Write-Host "Attempting to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' to '$new_sha_to_save' in repository '${{ github.repository }}'"
-          gh variable set ${{ env.GITHUB_VARIABLE_NAME }} --body "$new_sha_to_save" --repo "${{ github.repository }}"
-          Write-Host "GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' updated successfully."
+          Write-Host "Attempting to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' to '$env:NEW_SHA_TO_SAVE' in repository '${{ github.repository }}' via REST API"
+
+          $apiUrl = "https://api.github.com/repos/${{ github.repository }}/actions/variables/${{ env.GITHUB_VARIABLE_NAME }}"
+          $body = ConvertTo-Json @{
+              name  = "${{ env.GITHUB_VARIABLE_NAME }}"
+              value = "$env:NEW_SHA_TO_SAVE"
+          }
+
+          try {
+              Invoke-RestMethod -Uri $apiUrl -Method Put -Headers @{
+                  "Authorization"        = "Bearer $env:GH_TOKEN"
+                  "Accept"               = "application/vnd.github+json"
+                  "X-GitHub-Api-Version" = "2022-11-28"
+              } -Body $body -ContentType "application/json"
+              Write-Host "GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' updated successfully via REST API."
+          } catch {
+              Write-Error "Failed to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}'. Status: $($_.Exception.Response.StatusCode). Response: $($_.Exception.Response.Content)"
+              exit 1
+          }
         shell: pwsh
