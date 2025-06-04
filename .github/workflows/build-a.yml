@@ -97,11 +97,11 @@ jobs:
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITHUB_VARIABLE_NAME and github.repository are accessed via bash env vars
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GITHUB_TOKEN is automatically available
+          # GITHUB_VARIABLE_NAME is from the workflow's top-level env
         run: |
           echo "NEW_SHA_TO_SAVE environment variable value: '${NEW_SHA_TO_SAVE}'"
-          echo "GITHUB_VARIABLE_NAME environment variable value: '${GITHUB_VARIABLE_NAME}'" # Note: env vars are uppercase in bash by convention
+          echo "GITHUB_VARIABLE_NAME environment variable value: '${GITHUB_VARIABLE_NAME}'"
           echo "GITHUB_REPOSITORY context value: '${GITHUB_REPOSITORY}'"
 
           if [ -z "${NEW_SHA_TO_SAVE}" ]; then
@@ -109,46 +109,32 @@ jobs:
             exit 1
           fi
 
-          TARGET_VARIABLE_NAME="${GITHUB_VARIABLE_NAME}" # Use the value from env context
+          TARGET_VARIABLE_NAME="${GITHUB_VARIABLE_NAME}"
           TARGET_VARIABLE_VALUE="${NEW_SHA_TO_SAVE}"
-          TARGET_REPOSITORY="${GITHUB_REPOSITORY}" # Use the value from env context
+          TARGET_REPOSITORY="${GITHUB_REPOSITORY}"
 
-          API_URL="https://api.github.com/repos/${TARGET_REPOSITORY}/actions/variables/${TARGET_VARIABLE_NAME}"
+          API_ENDPOINT="/repos/${TARGET_REPOSITORY}/actions/variables/${TARGET_VARIABLE_NAME}"
           
-          # Prepare JSON payload
-          # Using jq if available, otherwise simple echo for this structure
-          # Note: Single quotes around the JSON string, double quotes inside for keys/values
-          JSON_PAYLOAD=$(printf '{"name":"%s","value":"%s"}' "${TARGET_VARIABLE_NAME}" "${TARGET_VARIABLE_VALUE}")
+          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${TARGET_VARIABLE_VALUE}' in repository '${TARGET_REPOSITORY}' via gh api"
+          echo "API Endpoint: ${API_ENDPOINT}"
+          echo "Payload: name=${TARGET_VARIABLE_NAME}, value=${TARGET_VARIABLE_VALUE}"
 
-          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${TARGET_VARIABLE_VALUE}' in repository '${TARGET_REPOSITORY}' via REST API using curl"
-          echo "Constructed API URL: ${API_URL}"
-          echo "Request Body JSON: ${JSON_PAYLOAD}"
+          # Use gh api to make the PUT request
+          # The GH_TOKEN in env will be used automatically by gh for authentication
+          gh api \
+            --method PUT \
+            "${API_ENDPOINT}" \
+            -f name="${TARGET_VARIABLE_NAME}" \
+            -f value="${TARGET_VARIABLE_VALUE}" \
+            --silent # Add --silent to suppress progress, errors will still show
 
-          # Perform the curl request
-          # -s for silent (no progress meter), -S to show errors
-          # -w "%{http_code}" to output HTTP status code
-          # -o response.txt to save the response body to a file
-          HTTP_STATUS_CODE=$(curl -s -S -X PUT \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -H "Content-Type: application/json" \
-            -d "${JSON_PAYLOAD}" \
-            -o response.txt \
-            -w "%{http_code}" \
-            "${API_URL}")
-          
-          RESPONSE_BODY=$(cat response.txt)
-          echo "Curl command executed."
-          echo "HTTP Status Code: ${HTTP_STATUS_CODE}"
-          echo "Response Body: ${RESPONSE_BODY}"
-
-          # GitHub API for updating a variable returns 204 No Content on success
-          if [ "${HTTP_STATUS_CODE}" -eq 204 ]; then
-            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via curl (HTTP 204)."
+          # Check the exit code of the gh api command
+          GH_API_EXIT_CODE=$?
+          if [ ${GH_API_EXIT_CODE} -eq 0 ]; then
+            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via gh api."
           else
-            echo "::error title=API Update Failed (curl)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. HTTP Status: ${HTTP_STATUS_CODE}"
-            # The RESPONSE_BODY will already be printed above.
+            echo "::error title=API Update Failed (gh api)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh api' exited with code ${GH_API_EXIT_CODE}."
+            # gh api usually prints error details from the API to stderr, which should appear in logs.
             exit 1
           fi
         shell: bash
