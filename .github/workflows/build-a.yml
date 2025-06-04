@@ -9,7 +9,7 @@ env:
   UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
   # Name of the GitHub Repository Variable used to store the last built upstream SHA
-  GITHUB_VARIABLE_NAME: TEST_SHA_VAR
+  GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   # Directory where Corretto source will be checked out
   CORRETTO_SOURCE_DIR: corretto_source_checkout
 
@@ -202,12 +202,12 @@ jobs:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
 
-      - name: Update GitHub Repository Variable with PAT using 'gh variable set'
+      - name: Update GitHub Repository Variable with PAT # Renamed for clarity
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }} # Ensure this uses your PAT
-          TARGET_VARIABLE_NAME: TEST_SHA_VAR # Or your original variable name if you revert
+          GH_TOKEN: ${{ secrets.MY_PAT }} # IMPORTANT: Use your PAT secret
+          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA # Or TEST_SHA_VAR if you're still using it
         run: |
           echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
           
@@ -218,7 +218,6 @@ jobs:
             echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
           else
             echo "::error title=Variable Set Failed (gh variable set)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh variable set' exited with code ${GH_VAR_SET_EXIT_CODE}."
-            # gh variable set should print errors to stderr.
             exit 1
           fi
         shell: bash
