@@ -35,11 +35,23 @@ jobs:
           Write-Host "Fetching current SHA for ${{ env.UPSTREAM_REPO }}@${{ env.UPSTREAM_BRANCH }}"
           git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }}.git temp_upstream_checkout
           cd temp_upstream_checkout
-          $current_sha = (git rev-parse HEAD).Trim()
-          echo "sha=$current_sha" >> $GITHUB_OUTPUT
+          $current_sha_ps_var = (git rev-parse HEAD).Trim() # Use distinct PS variable name
           cd ..
           Remove-Item -Recurse -Force temp_upstream_checkout
-          Write-Host "Current upstream SHA for ${{ env.UPSTREAM_BRANCH }}: '$current_sha'"
+
+          Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'" # This correctly shows 7558e8...
+
+          # --- CRITICAL FIX: Using Add-Content for setting step output ---
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$current_sha_ps_var"
+
+          # For immediate verification within this step's log:
+          Write-Host "Value written to GITHUB_OUTPUT for sha: $current_sha_ps_var"
+          Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
+          if (Test-Path $env:GITHUB_OUTPUT) {
+            Get-Content $env:GITHUB_OUTPUT
+          } else {
+            Write-Warning "GITHUB_OUTPUT file does not exist at path: $env:GITHUB_OUTPUT"
+          }
         shell: pwsh
 
       - name: Determine if Build is Needed
