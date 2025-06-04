@@ -48,10 +48,12 @@ jobs:
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
           $needs_build = "false"
-          if ("${{ github.event_name }}" == "workflow_dispatch") {
+
+          # Corrected: Use -eq for string comparison in PowerShell
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $needs_build = "true"
             Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
-          } elseif ($last_sha -ne $current_sha) {
+          } elseif ($last_sha -ne $current_sha) { # -ne is "not equal"
             $needs_build = "true"
             Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
           } else {
