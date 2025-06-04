@@ -2,23 +2,21 @@ name: Build Corretto 21 (lilliput-2) for Windows
 
 on:
   schedule:
-    - cron: '0 5 * * 1' # Every Monday at 05:00 UTC
-  workflow_dispatch: # Allows manual triggering
+    - cron: '0 5 * * 1' 
+  workflow_dispatch: 
 
 env:
   UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
-  # Name of the GitHub Repository Variable used to store the last built upstream SHA
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
-  # Directory where Corretto source will be checked out
   CORRETTO_SOURCE_DIR: corretto_source_checkout
 
 jobs:
   build_if_new_commits:
     runs-on: windows-latest
     permissions:
-      actions: write # Changed from 'variables: write'. Needed for updating repo variables via API.
-      # contents: read # Default, needed for checkout actions if not checking out self
+      actions: write 
+      
 
     steps:
       - name: Read Last Built Upstream SHA from GitHub Variable
@@ -35,16 +33,16 @@ jobs:
           Write-Host "Fetching current SHA for ${{ env.UPSTREAM_REPO }}@${{ env.UPSTREAM_BRANCH }}"
           git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }}.git temp_upstream_checkout
           cd temp_upstream_checkout
-          $current_sha_ps_var = (git rev-parse HEAD).Trim() # Use distinct PS variable name
+          $current_sha_ps_var = (git rev-parse HEAD).Trim() 
           cd ..
           Remove-Item -Recurse -Force temp_upstream_checkout
 
-          Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'" # This correctly shows 7558e8...
+          Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'" 
 
-          # --- CRITICAL FIX: Using Add-Content for setting step output ---
+          
           Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$current_sha_ps_var"
 
-          # For immediate verification within this step's log:
+          
           Write-Host "Value written to GITHUB_OUTPUT for sha: $current_sha_ps_var"
           Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
           if (Test-Path $env:GITHUB_OUTPUT) {
@@ -59,7 +57,7 @@ jobs:
         run: |
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
-          $needs_build_ps_var = "false" # Use a distinct PowerShell variable name
+          $needs_build_ps_var = "false" 
 
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $needs_build_ps_var = "true"
@@ -71,11 +69,11 @@ jobs:
             Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed for scheduled run."
           }
 
-          # Using Add-Content for setting step outputs
+          
           Add-Content -Path $env:GITHUB_OUTPUT -Value "needs_build=$needs_build_ps_var"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "event_name_checked=${{ github.event_name }}"
           
-          # For immediate verification within this step's log:
+          
           Write-Host "Value written for needs_build: $needs_build_ps_var"
           Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
           Write-Host "Content of GITHUB_OUTPUT file after writing:"
@@ -85,7 +83,7 @@ jobs:
             Write-Warning "GITHUB_OUTPUT file does not exist at path: $env:GITHUB_OUTPUT"
           }
         shell: pwsh
-      # --- Conditional Build Steps Start Here (Unchanged from your last version) ---
+      
 
       - name: Checkout Corretto source (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
@@ -202,12 +200,12 @@ jobs:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
 
-      - name: Update GitHub Repository Variable with PAT # Renamed for clarity
+      - name: Update GitHub Repository Variable with PAT 
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }} # IMPORTANT: Use your PAT secret
-          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA # Or TEST_SHA_VAR if you're still using it
+          GH_TOKEN: ${{ secrets.MY_PAT }} 
+          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA 
         run: |
           echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
           
