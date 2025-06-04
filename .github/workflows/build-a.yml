@@ -60,7 +60,15 @@ jobs:
             Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed for scheduled run."
           }
           echo "needs_build=$needs_build" >> $GITHUB_OUTPUT
+          echo "event_name_checked=${{ github.event_name }}" >> $GITHUB_OUTPUT
         shell: pwsh
+
+      - name: Debug Build Condition Output
+        run: |
+          echo "Value of needs_build from previous step: '${{ steps.check_build_condition.outputs.needs_build }}'"
+          echo "Value of event_name_checked from previous step: '${{ steps.check_build_condition.outputs.event_name_checked }}'"
+          echo "Current github.event_name context: '${{ github.event_name }}'"
+        shell: bash
 
       # --- Conditional Build Steps Start Here (Unchanged from your last version) ---
 
