@@ -99,6 +99,8 @@ jobs:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $ErrorActionPreference = "Stop" # Ensure script stops on errors
+
           Write-Host "NEW_SHA_TO_SAVE environment variable value: '$($env:NEW_SHA_TO_SAVE)'"
           Write-Host "GITHUB_VARIABLE_NAME environment variable value: '${{ env.GITHUB_VARIABLE_NAME }}'"
           Write-Host "GITHUB_REPOSITORY context value: '${{ github.repository }}'"
@@ -108,47 +110,65 @@ jobs:
             exit 1
           }
 
-          Write-Host "Attempting to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' to '$($env:NEW_SHA_TO_SAVE)' in repository '${{ github.repository }}' via REST API"
+          $targetVariableName = "${{ env.GITHUB_VARIABLE_NAME }}"
+          $targetVariableValue = "$($env:NEW_SHA_TO_SAVE)"
+          $targetRepository = "${{ github.repository }}"
 
-          $apiUrl = "https://api.github.com/repos/${{ github.repository }}/actions/variables/${{ env.GITHUB_VARIABLE_NAME }}"
-          Write-Host "Constructed API URL: $apiUrl"
-
-          $body = ConvertTo-Json @{
-              name  = "${{ env.GITHUB_VARIABLE_NAME }}"
-              value = "$($env:NEW_SHA_TO_SAVE)"
+          $apiUrl = "https://api.github.com/repos/$targetRepository/actions/variables/$targetVariableName"
+          
+          $payload = @{
+              name  = $targetVariableName
+              value = $targetVariableValue
           }
-          Write-Host "Request Body: $body"
+          $bodyAsJson = ConvertTo-Json -InputObject $payload -Compress # Compress to avoid extra newlines
+
+          Write-Host "Attempting to update GitHub variable '$targetVariableName' to '$targetVariableValue' in repository '$targetRepository' via REST API"
+          Write-Host "Constructed API URL: $apiUrl"
+          Write-Host "Request Body JSON: $bodyAsJson"
 
           try {
               Invoke-RestMethod -Uri $apiUrl -Method Put -Headers @{
                   "Authorization"        = "Bearer $env:GH_TOKEN"
                   "Accept"               = "application/vnd.github+json"
                   "X-GitHub-Api-Version" = "2022-11-28"
-              } -Body $body -ContentType "application/json" -ErrorAction Stop # Ensure ErrorAction is Stop
-              Write-Host "GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' updated successfully via REST API."
+              } -Body $bodyAsJson -ContentType "application/json"
+              # If Invoke-RestMethod throws an error (due to ErrorActionPreference="Stop" or HTTP error), 
+              # the script will jump to the catch block.
+              # If it doesn't throw, we assume success (GitHub API for PUT variable usually returns 204 No Content on success).
+              Write-Host "GitHub variable '$targetVariableName' update command sent. Assuming success (e.g., 204 No Content)."
           } catch {
-              Write-Error "Failed to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}'."
-              # More detailed error reporting for Invoke-RestMethod exceptions
-              if ($_.Exception.Response) {
-                  Write-Error "API Request to $apiUrl failed."
-                  Write-Error "Status Code: $($_.Exception.Response.StatusCode)"
-                  Write-Error "Status Description: $($_.Exception.Response.StatusDescription)"
-                  # Try to get response content
-                  $responseContent = $_.Exception.Response.GetResponseStream()
-                  if ($responseContent) {
-                      $streamReader = New-Object System.IO.StreamReader($responseContent)
-                      $responseBody = $streamReader.ReadToEnd()
-                      $streamReader.Close()
-                      $responseContent.Close()
-                      Write-Error "Response Body: $responseBody"
+              Write-Error "--- ERROR CAUGHT ---"
+              Write-Error "Failed to update GitHub variable '$targetVariableName'."
+              Write-Error "Exception Type: $($_.GetType().FullName)"
+              Write-Error "Exception Message: $($_.Exception.Message)" # Basic exception message
+
+              # Check for WebException details (which Invoke-RestMethod exceptions often are)
+              if ($_.Exception -is [System.Net.WebException]) {
+                  Write-Error "WebException Status: $($_.Exception.Status)"
+                  if ($_.Exception.Response) {
+                      $httpResponse = $_.Exception.Response
+                      Write-Error "HTTP Status Code: $($httpResponse.StatusCode)"
+                      Write-Error "HTTP Status Description: $($httpResponse.StatusDescription)"
+                      try {
+                          $responseStream = $httpResponse.GetResponseStream()
+                          if ($responseStream.CanRead) {
+                              $streamReader = New-Object System.IO.StreamReader($responseStream)
+                              $errorResponseBody = $streamReader.ReadToEnd()
+                              $streamReader.Close()
+                              Write-Error "Error Response Body: $errorResponseBody"
+                          } else {
+                              Write-Warning "Response stream cannot be read."
+                          }
+                          $responseStream.Close()
+                      } catch {
+                          Write-Warning "Could not read error response body stream: $($_.Exception.Message)"
+                      }
                   } else {
-                      Write-Error "No response body stream found."
+                      Write-Warning "No HTTP Response object found in the WebException."
                   }
-              } else {
-                  # General exception
-                  Write-Error "An unexpected error occurred: $($_.Exception.Message)"
-                  Write-Error "Full Exception: $($_.ToString())"
               }
+              Write-Error "Full Exception Details (ToString): $($_.ToString())"
+              Write-Error "--- END OF ERROR ---"
               exit 1
           }
         shell: pwsh
