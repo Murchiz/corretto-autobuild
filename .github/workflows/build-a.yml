@@ -17,7 +17,7 @@ jobs:
   build_if_new_commits:
     runs-on: windows-latest
     permissions:
-      actions: write-all # Changed from 'variables: write'. Needed for updating repo variables via API.
+      actions: write # Changed from 'variables: write'. Needed for updating repo variables via API.
       # contents: read # Default, needed for checkout actions if not checking out self
 
     steps:
@@ -93,28 +93,26 @@ jobs:
           echo "Current github.event_name context: '${{ github.event_name }}'"
         shell: bash
 
-      - name: List Repository Variables (Diagnostic)
+      - name: List Repository Variables (Diagnostic with PAT)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.MY_PAT }} # Use the PAT secret
+          # GITHUB_REPOSITORY is still available
         run: |
-          echo "Attempting to LIST variables for repository '${{ github.repository }}' via gh api"
+          echo "Attempting to LIST variables for repository '${GITHUB_REPOSITORY}' via gh api using PAT"
           
-          LIST_API_ENDPOINT="repos/${{ github.repository }}/actions/variables"
+          LIST_API_ENDPOINT="repos/${GITHUB_REPOSITORY}/actions/variables"
           echo "API Endpoint for gh api (LIST): ${LIST_API_ENDPOINT}"
 
           gh api \
             --method GET \
             "${LIST_API_ENDPOINT}" \
-            -f per_page=5 # Example parameter to list a few
+            -f per_page=5
 
           LIST_API_EXIT_CODE=$?
           if [ ${LIST_API_EXIT_CODE} -eq 0 ]; then
-            echo "Successfully listed variables (or an empty list if none public/accessible)."
-            # The JSON output from 'gh api' will be in the logs.
+            echo "Successfully listed variables using PAT."
           else
-            echo "::error title=API List Failed (gh api)::Failed to list variables. 'gh api' exited with code ${LIST_API_EXIT_CODE}."
-            # gh api should print API error details (like 404, 403) to stderr.
-            # If this also gives 404, it's a strong indicator of a path or general access issue.
+            echo "::error title=API List Failed (gh api with PAT)::Failed to list variables using PAT. 'gh api' exited with code ${LIST_API_EXIT_CODE}."
           fi
         shell: bash
 
