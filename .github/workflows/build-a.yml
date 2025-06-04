@@ -213,16 +213,29 @@ jobs:
       - name: Update GitHub Repository Variable with New SHA (if build succeeded)
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }} # This should now be 7558e8...
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          Write-Host "Attempting to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' to '$env:NEW_SHA_TO_SAVE' in repository '${{ github.repository }}' via REST API"
+          Write-Host "NEW_SHA_TO_SAVE environment variable value: '$($env:NEW_SHA_TO_SAVE)'" # Debug
+          Write-Host "GITHUB_VARIABLE_NAME environment variable value: '${{ env.GITHUB_VARIABLE_NAME }}'" # Debug
+          Write-Host "GITHUB_REPOSITORY context value: '${{ github.repository }}'" # Debug
+
+          # Ensure NEW_SHA_TO_SAVE is not empty before proceeding
+          if (-not $env:NEW_SHA_TO_SAVE) {
+            Write-Error "NEW_SHA_TO_SAVE is empty. Cannot update GitHub variable."
+            exit 1
+          }
+
+          Write-Host "Attempting to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' to '$($env:NEW_SHA_TO_SAVE)' in repository '${{ github.repository }}' via REST API"
 
           $apiUrl = "https://api.github.com/repos/${{ github.repository }}/actions/variables/${{ env.GITHUB_VARIABLE_NAME }}"
+          Write-Host "Constructed API URL: $apiUrl" # Debug
+
           $body = ConvertTo-Json @{
-              name  = "${{ env.GITHUB_VARIABLE_NAME }}"
-              value = "$env:NEW_SHA_TO_SAVE"
+              name  = "${{ env.GITHUB_VARIABLE_NAME }}" # Ensure this is the variable name, not its value
+              value = "$($env:NEW_SHA_TO_SAVE)"       # This is the new SHA
           }
+          Write-Host "Request Body: $body" # Debug
 
           try {
               Invoke-RestMethod -Uri $apiUrl -Method Put -Headers @{
@@ -232,7 +245,11 @@ jobs:
               } -Body $body -ContentType "application/json"
               Write-Host "GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' updated successfully via REST API."
           } catch {
-              Write-Error "Failed to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}'. Status: $($_.Exception.Response.StatusCode). Response: $($_.Exception.Response.Content)"
+              Write-Error "Failed to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}'."
+              Write-Error "Status Code: $($_.Exception.Response.StatusCode)"
+              Write-Error "Response Body: $($_.Exception.Response.Content | Out-String)" # Ensure full response is logged
+              # For more detailed error info, if available:
+              # Write-Error "Full Exception: $($_.ToString())"
               exit 1
           }
         shell: pwsh
