@@ -36,13 +36,8 @@ jobs:
           $current_sha_ps_var = (git rev-parse HEAD).Trim() 
           cd ..
           Remove-Item -Recurse -Force temp_upstream_checkout
-
           Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'" 
-
-          
           Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$current_sha_ps_var"
-
-          
           Write-Host "Value written to GITHUB_OUTPUT for sha: $current_sha_ps_var"
           Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
           if (Test-Path $env:GITHUB_OUTPUT) {
@@ -68,12 +63,8 @@ jobs:
           } else {
             Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed for scheduled run."
           }
-
-          
           Add-Content -Path $env:GITHUB_OUTPUT -Value "needs_build=$needs_build_ps_var"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "event_name_checked=${{ github.event_name }}"
-          
-          
           Write-Host "Value written for needs_build: $needs_build_ps_var"
           Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
           Write-Host "Content of GITHUB_OUTPUT file after writing:"
