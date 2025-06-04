@@ -47,20 +47,31 @@ jobs:
         run: |
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
-          $needs_build = "false"
+          $needs_build_ps_var = "false" # Use a distinct PowerShell variable name
 
-          # Corrected: Use -eq for string comparison in PowerShell
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $needs_build = "true"
+            $needs_build_ps_var = "true"
             Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
-          } elseif ($last_sha -ne $current_sha) { # -ne is "not equal"
-            $needs_build = "true"
+          } elseif ($last_sha -ne $current_sha) {
+            $needs_build_ps_var = "true"
             Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
           } else {
             Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed for scheduled run."
           }
-          echo "needs_build=$needs_build" >> $GITHUB_OUTPUT
-          echo "event_name_checked=${{ github.event_name }}" >> $GITHUB_OUTPUT
+
+          # Using Add-Content for setting step outputs
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "needs_build=$needs_build_ps_var"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "event_name_checked=${{ github.event_name }}"
+          
+          # For immediate verification within this step's log:
+          Write-Host "Value written for needs_build: $needs_build_ps_var"
+          Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
+          Write-Host "Content of GITHUB_OUTPUT file after writing:"
+          if (Test-Path $env:GITHUB_OUTPUT) {
+            Get-Content $env:GITHUB_OUTPUT
+          } else {
+            Write-Warning "GITHUB_OUTPUT file does not exist at path: $env:GITHUB_OUTPUT"
+          }
         shell: pwsh
 
       - name: Debug Build Condition Output
