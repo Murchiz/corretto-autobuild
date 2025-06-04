@@ -17,7 +17,7 @@ jobs:
   build_if_new_commits:
     runs-on: windows-latest
     permissions:
-      actions: write # Changed from 'variables: write'. Needed for updating repo variables via API.
+      actions: write-all # Changed from 'variables: write'. Needed for updating repo variables via API.
       # contents: read # Default, needed for checkout actions if not checking out self
 
     steps:
