@@ -97,8 +97,7 @@ jobs:
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GITHUB_TOKEN is automatically available
-          # GITHUB_VARIABLE_NAME is from the workflow's top-level env
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "NEW_SHA_TO_SAVE environment variable value: '${NEW_SHA_TO_SAVE}'"
           echo "GITHUB_VARIABLE_NAME environment variable value: '${GITHUB_VARIABLE_NAME}'"
@@ -113,28 +112,26 @@ jobs:
           TARGET_VARIABLE_VALUE="${NEW_SHA_TO_SAVE}"
           TARGET_REPOSITORY="${GITHUB_REPOSITORY}"
 
-          API_ENDPOINT="/repos/${TARGET_REPOSITORY}/actions/variables/${TARGET_VARIABLE_NAME}"
+          # Corrected: Removed the leading slash from the API endpoint
+          API_ENDPOINT="repos/${TARGET_REPOSITORY}/actions/variables/${TARGET_VARIABLE_NAME}" 
           
           echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${TARGET_VARIABLE_VALUE}' in repository '${TARGET_REPOSITORY}' via gh api"
-          echo "API Endpoint: ${API_ENDPOINT}"
+          echo "API Endpoint for gh api: ${API_ENDPOINT}" # This will now be repos/...
           echo "Payload: name=${TARGET_VARIABLE_NAME}, value=${TARGET_VARIABLE_VALUE}"
 
-          # Use gh api to make the PUT request
-          # The GH_TOKEN in env will be used automatically by gh for authentication
           gh api \
             --method PUT \
             "${API_ENDPOINT}" \
             -f name="${TARGET_VARIABLE_NAME}" \
             -f value="${TARGET_VARIABLE_VALUE}" \
-            --silent # Add --silent to suppress progress, errors will still show
+            --silent
 
-          # Check the exit code of the gh api command
           GH_API_EXIT_CODE=$?
           if [ ${GH_API_EXIT_CODE} -eq 0 ]; then
             echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via gh api."
           else
             echo "::error title=API Update Failed (gh api)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh api' exited with code ${GH_API_EXIT_CODE}."
-            # gh api usually prints error details from the API to stderr, which should appear in logs.
+            # gh api should print API error details to stderr, which will appear in the logs.
             exit 1
           fi
         shell: bash
