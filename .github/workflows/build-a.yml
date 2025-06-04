@@ -116,45 +116,23 @@ jobs:
           fi
         shell: bash
 
-      - name: Update GitHub Repository Variable with New SHA (if build succeeded)
+      - name: Update GitHub Repository Variable with PAT using 'gh variable set'
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.MY_PAT }} # Ensure this uses your PAT
+          TARGET_VARIABLE_NAME: TEST_SHA_VAR # Or your original variable name if you revert
         run: |
-          echo "NEW_SHA_TO_SAVE environment variable value: '${NEW_SHA_TO_SAVE}'"
-          echo "GITHUB_VARIABLE_NAME environment variable value: '${GITHUB_VARIABLE_NAME}'"
-          echo "GITHUB_REPOSITORY context value: '${GITHUB_REPOSITORY}'"
-
-          if [ -z "${NEW_SHA_TO_SAVE}" ]; then
-            echo "::error::NEW_SHA_TO_SAVE is empty. Cannot update GitHub variable."
-            exit 1
-          fi
-
-          TARGET_VARIABLE_NAME="${GITHUB_VARIABLE_NAME}"
-          TARGET_VARIABLE_VALUE="${NEW_SHA_TO_SAVE}"
-          TARGET_REPOSITORY="${GITHUB_REPOSITORY}"
-
-          # Corrected: Removed the leading slash from the API endpoint
-          API_ENDPOINT="repos/${TARGET_REPOSITORY}/actions/variables/${TARGET_VARIABLE_NAME}" 
+          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
           
-          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${TARGET_VARIABLE_VALUE}' in repository '${TARGET_REPOSITORY}' via gh api"
-          echo "API Endpoint for gh api: ${API_ENDPOINT}" # This will now be repos/...
-          echo "Payload: name=${TARGET_VARIABLE_NAME}, value=${TARGET_VARIABLE_VALUE}"
+          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
 
-          gh api \
-            --method PUT \
-            "${API_ENDPOINT}" \
-            -f name="${TARGET_VARIABLE_NAME}" \
-            -f value="${TARGET_VARIABLE_VALUE}" \
-            --silent
-
-          GH_API_EXIT_CODE=$?
-          if [ ${GH_API_EXIT_CODE} -eq 0 ]; then
-            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via gh api."
+          GH_VAR_SET_EXIT_CODE=$?
+          if [ ${GH_VAR_SET_EXIT_CODE} -eq 0 ]; then
+            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
           else
-            echo "::error title=API Update Failed (gh api)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh api' exited with code ${GH_API_EXIT_CODE}."
-            # gh api should print API error details to stderr, which will appear in the logs.
+            echo "::error title=Variable Set Failed (gh variable set)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh variable set' exited with code ${GH_VAR_SET_EXIT_CODE}."
+            # gh variable set should print errors to stderr.
             exit 1
           fi
         shell: bash
