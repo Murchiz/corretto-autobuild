@@ -93,6 +93,66 @@ jobs:
           echo "Current github.event_name context: '${{ github.event_name }}'"
         shell: bash
 
+      - name: Update GitHub Repository Variable with New SHA (if build succeeded)
+        if: steps.check_build_condition.outputs.needs_build == 'true' && success()
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Write-Host "NEW_SHA_TO_SAVE environment variable value: '$($env:NEW_SHA_TO_SAVE)'"
+          Write-Host "GITHUB_VARIABLE_NAME environment variable value: '${{ env.GITHUB_VARIABLE_NAME }}'"
+          Write-Host "GITHUB_REPOSITORY context value: '${{ github.repository }}'"
+
+          if (-not $env:NEW_SHA_TO_SAVE) {
+            Write-Error "NEW_SHA_TO_SAVE is empty. Cannot update GitHub variable."
+            exit 1
+          }
+
+          Write-Host "Attempting to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' to '$($env:NEW_SHA_TO_SAVE)' in repository '${{ github.repository }}' via REST API"
+
+          $apiUrl = "https://api.github.com/repos/${{ github.repository }}/actions/variables/${{ env.GITHUB_VARIABLE_NAME }}"
+          Write-Host "Constructed API URL: $apiUrl"
+
+          $body = ConvertTo-Json @{
+              name  = "${{ env.GITHUB_VARIABLE_NAME }}"
+              value = "$($env:NEW_SHA_TO_SAVE)"
+          }
+          Write-Host "Request Body: $body"
+
+          try {
+              Invoke-RestMethod -Uri $apiUrl -Method Put -Headers @{
+                  "Authorization"        = "Bearer $env:GH_TOKEN"
+                  "Accept"               = "application/vnd.github+json"
+                  "X-GitHub-Api-Version" = "2022-11-28"
+              } -Body $body -ContentType "application/json" -ErrorAction Stop # Ensure ErrorAction is Stop
+              Write-Host "GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}' updated successfully via REST API."
+          } catch {
+              Write-Error "Failed to update GitHub variable '${{ env.GITHUB_VARIABLE_NAME }}'."
+              # More detailed error reporting for Invoke-RestMethod exceptions
+              if ($_.Exception.Response) {
+                  Write-Error "API Request to $apiUrl failed."
+                  Write-Error "Status Code: $($_.Exception.Response.StatusCode)"
+                  Write-Error "Status Description: $($_.Exception.Response.StatusDescription)"
+                  # Try to get response content
+                  $responseContent = $_.Exception.Response.GetResponseStream()
+                  if ($responseContent) {
+                      $streamReader = New-Object System.IO.StreamReader($responseContent)
+                      $responseBody = $streamReader.ReadToEnd()
+                      $streamReader.Close()
+                      $responseContent.Close()
+                      Write-Error "Response Body: $responseBody"
+                  } else {
+                      Write-Error "No response body stream found."
+                  }
+              } else {
+                  # General exception
+                  Write-Error "An unexpected error occurred: $($_.Exception.Message)"
+                  Write-Error "Full Exception: $($_.ToString())"
+              }
+              exit 1
+          }
+        shell: pwsh
+
       # --- Conditional Build Steps Start Here (Unchanged from your last version) ---
 
       - name: Checkout Corretto source (if build is needed)
