@@ -16,7 +16,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       actions: write 
-      
 
     steps:
       - name: Read Last Built Upstream SHA from GitHub Variable
