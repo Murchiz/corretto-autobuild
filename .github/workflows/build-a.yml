@@ -13,7 +13,7 @@ env:
 
 jobs:
   build_if_new_commits:
-    runs-on: windows-latest
+    runs-on: windows-2025
     permissions:
       contents: read
       actions: read
