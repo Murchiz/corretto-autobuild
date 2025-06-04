@@ -98,80 +98,60 @@ jobs:
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_VARIABLE_NAME and github.repository are accessed via bash env vars
         run: |
-          $ErrorActionPreference = "Stop" # Ensure script stops on errors
+          echo "NEW_SHA_TO_SAVE environment variable value: '${NEW_SHA_TO_SAVE}'"
+          echo "GITHUB_VARIABLE_NAME environment variable value: '${GITHUB_VARIABLE_NAME}'" # Note: env vars are uppercase in bash by convention
+          echo "GITHUB_REPOSITORY context value: '${GITHUB_REPOSITORY}'"
 
-          Write-Host "NEW_SHA_TO_SAVE environment variable value: '$($env:NEW_SHA_TO_SAVE)'"
-          Write-Host "GITHUB_VARIABLE_NAME environment variable value: '${{ env.GITHUB_VARIABLE_NAME }}'"
-          Write-Host "GITHUB_REPOSITORY context value: '${{ github.repository }}'"
-
-          if (-not $env:NEW_SHA_TO_SAVE) {
-            Write-Error "NEW_SHA_TO_SAVE is empty. Cannot update GitHub variable."
+          if [ -z "${NEW_SHA_TO_SAVE}" ]; then
+            echo "::error::NEW_SHA_TO_SAVE is empty. Cannot update GitHub variable."
             exit 1
-          }
+          fi
 
-          $targetVariableName = "${{ env.GITHUB_VARIABLE_NAME }}"
-          $targetVariableValue = "$($env:NEW_SHA_TO_SAVE)"
-          $targetRepository = "${{ github.repository }}"
+          TARGET_VARIABLE_NAME="${GITHUB_VARIABLE_NAME}" # Use the value from env context
+          TARGET_VARIABLE_VALUE="${NEW_SHA_TO_SAVE}"
+          TARGET_REPOSITORY="${GITHUB_REPOSITORY}" # Use the value from env context
 
-          $apiUrl = "https://api.github.com/repos/$targetRepository/actions/variables/$targetVariableName"
+          API_URL="https://api.github.com/repos/${TARGET_REPOSITORY}/actions/variables/${TARGET_VARIABLE_NAME}"
           
-          $payload = @{
-              name  = $targetVariableName
-              value = $targetVariableValue
-          }
-          $bodyAsJson = ConvertTo-Json -InputObject $payload -Compress # Compress to avoid extra newlines
+          # Prepare JSON payload
+          # Using jq if available, otherwise simple echo for this structure
+          # Note: Single quotes around the JSON string, double quotes inside for keys/values
+          JSON_PAYLOAD=$(printf '{"name":"%s","value":"%s"}' "${TARGET_VARIABLE_NAME}" "${TARGET_VARIABLE_VALUE}")
 
-          Write-Host "Attempting to update GitHub variable '$targetVariableName' to '$targetVariableValue' in repository '$targetRepository' via REST API"
-          Write-Host "Constructed API URL: $apiUrl"
-          Write-Host "Request Body JSON: $bodyAsJson"
+          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${TARGET_VARIABLE_VALUE}' in repository '${TARGET_REPOSITORY}' via REST API using curl"
+          echo "Constructed API URL: ${API_URL}"
+          echo "Request Body JSON: ${JSON_PAYLOAD}"
 
-          try {
-              Invoke-RestMethod -Uri $apiUrl -Method Put -Headers @{
-                  "Authorization"        = "Bearer $env:GH_TOKEN"
-                  "Accept"               = "application/vnd.github+json"
-                  "X-GitHub-Api-Version" = "2022-11-28"
-              } -Body $bodyAsJson -ContentType "application/json"
-              # If Invoke-RestMethod throws an error (due to ErrorActionPreference="Stop" or HTTP error), 
-              # the script will jump to the catch block.
-              # If it doesn't throw, we assume success (GitHub API for PUT variable usually returns 204 No Content on success).
-              Write-Host "GitHub variable '$targetVariableName' update command sent. Assuming success (e.g., 204 No Content)."
-          } catch {
-              Write-Error "--- ERROR CAUGHT ---"
-              Write-Error "Failed to update GitHub variable '$targetVariableName'."
-              Write-Error "Exception Type: $($_.GetType().FullName)"
-              Write-Error "Exception Message: $($_.Exception.Message)" # Basic exception message
+          # Perform the curl request
+          # -s for silent (no progress meter), -S to show errors
+          # -w "%{http_code}" to output HTTP status code
+          # -o response.txt to save the response body to a file
+          HTTP_STATUS_CODE=$(curl -s -S -X PUT \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d "${JSON_PAYLOAD}" \
+            -o response.txt \
+            -w "%{http_code}" \
+            "${API_URL}")
+          
+          RESPONSE_BODY=$(cat response.txt)
+          echo "Curl command executed."
+          echo "HTTP Status Code: ${HTTP_STATUS_CODE}"
+          echo "Response Body: ${RESPONSE_BODY}"
 
-              # Check for WebException details (which Invoke-RestMethod exceptions often are)
-              if ($_.Exception -is [System.Net.WebException]) {
-                  Write-Error "WebException Status: $($_.Exception.Status)"
-                  if ($_.Exception.Response) {
-                      $httpResponse = $_.Exception.Response
-                      Write-Error "HTTP Status Code: $($httpResponse.StatusCode)"
-                      Write-Error "HTTP Status Description: $($httpResponse.StatusDescription)"
-                      try {
-                          $responseStream = $httpResponse.GetResponseStream()
-                          if ($responseStream.CanRead) {
-                              $streamReader = New-Object System.IO.StreamReader($responseStream)
-                              $errorResponseBody = $streamReader.ReadToEnd()
-                              $streamReader.Close()
-                              Write-Error "Error Response Body: $errorResponseBody"
-                          } else {
-                              Write-Warning "Response stream cannot be read."
-                          }
-                          $responseStream.Close()
-                      } catch {
-                          Write-Warning "Could not read error response body stream: $($_.Exception.Message)"
-                      }
-                  } else {
-                      Write-Warning "No HTTP Response object found in the WebException."
-                  }
-              }
-              Write-Error "Full Exception Details (ToString): $($_.ToString())"
-              Write-Error "--- END OF ERROR ---"
-              exit 1
-          }
-        shell: pwsh
+          # GitHub API for updating a variable returns 204 No Content on success
+          if [ "${HTTP_STATUS_CODE}" -eq 204 ]; then
+            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via curl (HTTP 204)."
+          else
+            echo "::error title=API Update Failed (curl)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. HTTP Status: ${HTTP_STATUS_CODE}"
+            # The RESPONSE_BODY will already be printed above.
+            exit 1
+          fi
+        shell: bash
 
       # --- Conditional Build Steps Start Here (Unchanged from your last version) ---
 
