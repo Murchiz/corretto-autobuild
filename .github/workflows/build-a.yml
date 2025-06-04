@@ -9,7 +9,7 @@ env:
   UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
   # Name of the GitHub Repository Variable used to store the last built upstream SHA
-  GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+  GITHUB_VARIABLE_NAME: TEST_SHA_VAR
   # Directory where Corretto source will be checked out
   CORRETTO_SOURCE_DIR: corretto_source_checkout
 
