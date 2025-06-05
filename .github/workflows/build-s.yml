@@ -1,0 +1,151 @@
+name: Build if Upstream Changes
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 * * * *"  # Every hour, just in case
+  push:
+    branches:
+      - main
+
+permissions:
+  # Minimize GITHUB_TOKEN permissions for everything except what's needed
+  contents: read
+  actions: read
+
+env:
+  UPSTREAM_REPO: eclipse-corretto/corretto-21
+  UPSTREAM_BRANCH: lilliput-2
+  GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+
+jobs:
+  build_if_new_commits:
+    runs-on: windows-2025
+    outputs:
+      needs_build: ${{ steps.check_build_condition.outputs.needs_build }}
+    steps:
+
+      # 1. Fetch the "last built" SHA from repository variables
+      - name: Read Last Built SHA
+        id: read_last_sha
+        run: |
+          echo "last_sha=${{ vars.${{ env.GITHUB_VARIABLE_NAME }} }}" >> $GITHUB_OUTPUT
+        shell: pwsh
+
+      # 2. Get the latest commit SHA from the upstream repository
+      - name: Get Upstream SHA
+        id: get_upstream_sha
+        run: |
+          git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }} temp_upstream
+          Push-Location temp_upstream
+          $sha = (git rev-parse HEAD).Trim()
+          Pop-Location
+          echo "sha=$sha" >> $GITHUB_OUTPUT
+        shell: pwsh
+
+      # 3. Compare SHAs and decide if a build is needed
+      - name: Determine if Build is Needed
+        id: check_build_condition
+        run: |
+          $last = "${{ steps.read_last_sha.outputs.last_sha }}"
+          $current = "${{ steps.get_upstream_sha.outputs.sha }}"
+          Write-Host "Previous SHA: $last"
+          Write-Host "Current SHA : $current"
+          if ($last -ne $current) {
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+          } else {
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+          }
+        shell: pwsh
+
+      # If no build is needed, exit early
+      - name: No Build Needed
+        if: steps.check_build_condition.outputs.needs_build == 'false'
+        run: |
+          Write-Host "No new upstream commits; skipping build."
+        shell: pwsh
+
+      # 4. (Removed) -- Visual Studio Build Tools are preinstalled on windows-2025 runners :contentReference[oaicite:0]{index=0}
+      # Instead of installing via vs_installer.exe, rely on the preinstalled Visual Studio 2022 Build Tools.
+
+      # 5. (Removed) -- Cygwin is already installed on windows-2025 runners :contentReference[oaicite:1]{index=1}
+      # Instead of using Chocolatey, just ensure the existing Cygwin bin folder is on PATH
+      - name: Add Cygwin to PATH
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        run: |
+          if (Test-Path "C:\cygwin64\bin") {
+            echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } elseif (Test-Path "C:\msys64\usr\bin") {
+            echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Error "No known Linux-style shell (Cygwin/MSYS2) found!"
+            exit 1
+          }
+        shell: pwsh
+
+      # 6. Check out the upstream Corretto source (for actual build)
+      - name: Checkout Corretto Source
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+
+      # 7. Set up Corretto 21 as Bootstrap JDK
+      - name: Set up Bootstrap JDK
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: 21
+          architecture: x64
+        id: setup_jdk
+
+      # 8. Perform the build (PowerShell + Bash mixed as needed)
+      - name: Build Corretto
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        shell: pwsh
+        run: |
+          # Example build commands—customize as needed
+          bash -lc "cd \$GITHUB_WORKSPACE && make all"
+
+      # 9. Package build artifacts into a staging folder
+      - name: Prepare Artifact Structure
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        id: prepare_artifact
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir staging_artifact
+          cp -r build/*/images/jdk/* staging_artifact/
+        shell: pwsh
+
+      # 10. Upload artifacts for inspection
+      - name: Upload Build Artifacts
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: corretto-latest-jdk
+          path: staging_artifact/
+
+      # 11. Update the repository variable to record the new SHA,
+      #     using actions/github-script instead of gh CLI :contentReference[oaicite:2]{index=2}
+      - name: Update Last Built SHA Variable
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.MY_PAT }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const varName = process.env.TARGET_VARIABLE_NAME;
+            const varValue = process.env.NEW_SHA_TO_SAVE;
+            await github.actions.createOrUpdateRepoVariable({
+              owner,
+              repo,
+              name: varName,
+              value: varValue
+            });
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          TARGET_VARIABLE_NAME: ${{ env.GITHUB_VARIABLE_NAME }}
+
