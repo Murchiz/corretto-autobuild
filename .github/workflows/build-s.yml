@@ -39,7 +39,7 @@ jobs:
           if (LATEX_8_1749124113563bootJdkWindows -notmatch '^[a-zA-Z]:') {
           Write-Error "JAVA_HOME contains invalid characters: 'LATEX_9_1749124113563bootJdkWindows'"
           try {
-          LATEX_10_1749124113563bootJdkWindows").Trim()
+          LATEX_10_1749124113563bootJdkWindows").Trim())
           if (-not LATEX_11_1749124113563bootJdkCygwin -match '[;&|`LATEX_12_1749124113563(LATEX_13_1749124113563configureCmd = "./configure --with-boot-jdk='LATEX_14_1749124113563configureCmd
 
       - name: Determine if Build is Needed
