@@ -1,4 +1,4 @@
-name: Build Corretto 21 (lilliput-2) for Windows
+name: Unused
 
 on:
   push:
