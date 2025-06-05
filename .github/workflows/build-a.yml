@@ -198,9 +198,7 @@ jobs:
           TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
         run: |
           echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
-          
           gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
-
           GH_VAR_SET_EXIT_CODE=$?
           if [ ${GH_VAR_SET_EXIT_CODE} -eq 0 ]; then
             echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
