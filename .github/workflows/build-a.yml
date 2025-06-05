@@ -75,6 +75,29 @@ jobs:
           }
         shell: pwsh
 
+      - name: Update GitHub Repository Variable with PAT
+        if: steps.check_build_condition.outputs.needs_build == 'true' && success()
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+          RAW_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
+          SANITIZED_GITHUB_REPOSITORY="${RAW_GITHUB_REPOSITORY%%$'\r'}"
+          echo "Raw github.repository: '${RAW_GITHUB_REPOSITORY}'"
+          echo "Sanitized github.repository: '${SANITIZED_GITHUB_REPOSITORY}'"
+          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${SANITIZED_GITHUB_REPOSITORY}"
+          GH_VAR_SET_EXIT_CODE=$?
+          if [ ${GH_VAR_SET_EXIT_CODE} -eq 0 ]; then
+            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
+          else
+            echo "::error title=Variable Set Failed (gh variable set)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh variable set' exited with code ${GH_VAR_SET_EXIT_CODE}."
+            # gh variable set should print errors to stderr, which will appear in the logs.
+            exit 1
+          fi
+        shell: bash
+
       - name: Checkout Corretto source (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/checkout@v4
@@ -189,26 +212,3 @@ jobs:
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
-
-      - name: Update GitHub Repository Variable with PAT
-        if: steps.check_build_condition.outputs.needs_build == 'true' && success()
-        env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }}
-          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
-          RAW_GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
-          SANITIZED_GITHUB_REPOSITORY="${RAW_GITHUB_REPOSITORY%%$'\r'}"
-          echo "Raw github.repository: '${RAW_GITHUB_REPOSITORY}'"
-          echo "Sanitized github.repository: '${SANITIZED_GITHUB_REPOSITORY}'"
-          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${SANITIZED_GITHUB_REPOSITORY}"
-          GH_VAR_SET_EXIT_CODE=$?
-          if [ ${GH_VAR_SET_EXIT_CODE} -eq 0 ]; then
-            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
-          else
-            echo "::error title=Variable Set Failed (gh variable set)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh variable set' exited with code ${GH_VAR_SET_EXIT_CODE}."
-            # gh variable set should print errors to stderr, which will appear in the logs.
-            exit 1
-          fi
-        shell: bash
