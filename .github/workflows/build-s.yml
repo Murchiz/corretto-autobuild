@@ -1,162 +1,214 @@
-name: Build if Upstream Changes
+name: Build Corretto 21 (lilliput-2) for Windows
 
 on:
-  workflow_dispatch: {}
   schedule:
-    - cron: "0 * * * *"  # Every hour, just in case
-  push:
-    branches: [ main ]
-
-permissions:
-  contents: read
-  actions: read
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
 
 env:
-  UPSTREAM_REPO: eclipse-corretto/corretto-21
+  UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+  CORRETTO_SOURCE_DIR: corretto_source_checkout
 
 jobs:
   build_if_new_commits:
     runs-on: windows-2025
-    outputs:
-      needs_build: ${{ steps.check_build_condition.outputs.needs_build }}
+    permissions:
+      contents: read
+      actions: read
 
     steps:
-
-      # 1. Read the "last built" SHA from repository variables via GitHub REST API
-      - name: Read Last Built SHA
+      - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const varName = process.env.TARGET_VARIABLE_NAME;
-            let lastSha = "";
-            try {
-              const response = await github.rest.actions.getRepoVariable({
-                owner,
-                repo,
-                name: varName
-              });
-              lastSha = response.data.value;
-            } catch (error) {
-              // If the variable does not exist yet, treat as empty
-              core.info(`Variable "${varName}" not found; defaulting to empty SHA.`);
-            }
-            core.setOutput("last_sha", lastSha);
-        env:
-          TARGET_VARIABLE_NAME: ${{ env.GITHUB_VARIABLE_NAME }}
-
-      # 2. Clone upstream branch shallowly and grab its HEAD SHA
-      - name: Get Upstream SHA
-        id: get_upstream_sha
-        shell: pwsh
         run: |
-          git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }} temp_upstream
-          Push-Location temp_upstream
-          $sha = (git rev-parse HEAD).Trim()
-          Pop-Location
-          echo "sha=$sha" >> $GITHUB_OUTPUT
+          $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
+          echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
+          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
+        shell: pwsh
 
-      # 3. Compare the two SHAs to decide if a build is needed
+      - name: Get Current Upstream SHA for ${{ env.UPSTREAM_BRANCH }}
+        id: get_upstream_sha
+        run: |
+          Write-Host "Fetching current SHA for ${{ env.UPSTREAM_REPO }}@${{ env.UPSTREAM_BRANCH }}"
+          git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }}.git temp_upstream_checkout
+          cd temp_upstream_checkout
+          $current_sha_ps_var = (git rev-parse HEAD).Trim()
+          cd ..
+          Remove-Item -Recurse -Force temp_upstream_checkout
+          Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "sha=$current_sha_ps_var"
+          Write-Host "Value written to GITHUB_OUTPUT for sha: $current_sha_ps_var"
+          Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
+          if (Test-Path $env:GITHUB_OUTPUT) {
+            Get-Content $env:GITHUB_OUTPUT
+          } else {
+            Write-Warning "GITHUB_OUTPUT file does not exist at path: $env:GITHUB_OUTPUT"
+          }
+        shell: pwsh
+
       - name: Determine if Build is Needed
         id: check_build_condition
-        shell: pwsh
         run: |
-          $last    = "${{ steps.read_last_sha.outputs.last_sha }}"
-          $current = "${{ steps.get_upstream_sha.outputs.sha }}"
-          Write-Host "Previous SHA: $last"
-          Write-Host "Current  SHA: $current"
-          if ($last -ne $current) {
-            echo "needs_build=true" >> $GITHUB_OUTPUT
+          $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
+          $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
+          $needs_build_ps_var = "false"
+
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $needs_build_ps_var = "true"
+            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
+          } elseif ($last_sha -ne $current_sha) {
+            $needs_build_ps_var = "true"
+            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
           } else {
-            echo "needs_build=false" >> $GITHUB_OUTPUT
+            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed for scheduled run."
           }
-
-      # 4. If no build is needed, exit
-      - name: No Build Needed
-        if: steps.check_build_condition.outputs.needs_build == 'false'
-        shell: pwsh
-        run: |
-          Write-Host "No new upstream commit detected. Skipping build."
-
-      # 5. Add Cygwin (or MSYS2) from the preinstalled runner image to PATH
-      - name: Add Cygwin to PATH
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        shell: pwsh
-        run: |
-          if (Test-Path "C:\cygwin64\bin") {
-            echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          } elseif (Test-Path "C:\msys64\usr\bin") {
-            echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "needs_build=$needs_build_ps_var"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "event_name_checked=${{ github.event_name }}"
+          Write-Host "Value written for needs_build: $needs_build_ps_var"
+          Write-Host "Path to GITHUB_OUTPUT: $env:GITHUB_OUTPUT"
+          Write-Host "Content of GITHUB_OUTPUT file after writing:"
+          if (Test-Path $env:GITHUB_OUTPUT) {
+            Get-Content $env:GITHUB_OUTPUT
           } else {
-            Write-Error "No known Linux-style shell (Cygwin or MSYS2) found on this runner."
-            exit 1
+            Write-Warning "GITHUB_OUTPUT file does not exist at path: $env:GITHUB_OUTPUT"
           }
+        shell: pwsh
 
-      # 6. Check out the Corretto source if we do need to build
-      - name: Checkout Corretto Source
+      - name: Checkout Corretto source (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ env.UPSTREAM_BRANCH }}
+          ref: ${{ steps.get_upstream_sha.outputs.sha }}
+          path: ${{ env.CORRETTO_SOURCE_DIR }}
 
-      # 7. Set up Corretto 21 as the bootstrap JDK
-      - name: Set up Bootstrap JDK
+      - name: Set up Corretto 21 as Bootstrap JDK (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
         with:
-          distribution: corretto
-          java-version: 21
+          distribution: 'corretto'
+          java-version: '21'
           architecture: x64
         id: setup_jdk
 
-      # 8. Run the actual build (adjust the build command to your project’s needs)
-      - name: Build Corretto
+      - name: Install Visual Studio Build Tools (C++ workload) (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        shell: pwsh
         run: |
-          bash -lc "cd $Env:GITHUB_WORKSPACE && make all"
+          echo "Ensuring Visual Studio C++ workload is installed..."
+          & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart || `
+          & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "C:\Program Files\Microsoft Visual Studio\2022\Community" --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart || `
+          & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "C:\Program Files\Microsoft Visual Studio\2022\Professional" --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart || `
+          echo "Visual Studio C++ workload check/install complete (or attempted)."
+        shell: pwsh
 
-      # 9. Collect the JDK output into a staging directory
-      - name: Prepare Artifact Structure
+      - name: Install Cygwin with necessary packages (if build is needed)
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        run: |
+          choco install cygwin --params "/InstallDir:C:\cygwin64 /NoAdmin" -y
+          $cygwinSetupPath = "C:\cygwin64\cygwinsetup.exe"
+          if (-not (Test-Path $cygwinSetupPath -PathType Leaf)) { Write-Error "Cygwin setup executable ($cygwinSetupPath) not found!"; exit 1 }
+          $cygwinPackages = "make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake"
+          $cygwinMirror = "https://mirrors.kernel.org/sourceware/cygwin/"
+          Write-Host "Executing Cygwin setup ($cygwinSetupPath) to install packages: $cygwinPackages"
+          try {
+              Start-Process -FilePath $cygwinSetupPath -ArgumentList "-q -s $cygwinMirror -P $cygwinPackages" -Wait -NoNewWindow
+              if ($LASTEXITCODE -ne 0) { Write-Error "Cygwin setup ($cygwinSetupPath) exited with code $LASTEXITCODE."; exit $LASTEXITCODE }
+              Write-Host "Cygwin package installation command finished."
+          }
+          catch { Write-Error "Failed to start or execute '$cygwinSetupPath'. Error was: $($_.Exception.Message)"; exit 1 }
+          echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      - name: Configure Corretto Build (if build is needed)
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          $BOOT_JDK_WINDOWS = $env:JAVA_HOME
+          Write-Host "JAVA_HOME environment variable value: $BOOT_JDK_WINDOWS"
+          if (-not $BOOT_JDK_WINDOWS) { Write-Error "Bootstrap JDK path from JAVA_HOME environment variable is empty!"; exit 1 }
+          try {
+              Get-Command cygpath -ErrorAction Stop | Out-Null
+              $BOOT_JDK_CYGWIN = (& cygpath --unix $BOOT_JDK_WINDOWS).Trim()
+          } catch { Write-Error "cygpath command not found or failed to convert '$BOOT_JDK_WINDOWS'. Error: $($_.Exception.Message)"; exit 1 }
+          Write-Host "Using Bootstrap JDK (Windows path): $BOOT_JDK_WINDOWS"
+          Write-Host "Using Bootstrap JDK (Cygwin path): $BOOT_JDK_CYGWIN"
+          Write-Host "Running configure from PowerShell working directory: $(Get-Location)"
+          C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
+        shell: pwsh
+
+      - name: Build Corretto (make images) (if build is needed)
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          Write-Host "Running make from PowerShell working directory: $(Get-Location)"
+          C:\cygwin64\bin\bash -c "make images"
+        shell: pwsh
+
+      - name: Clean Debug Symbols from JDK Image (if build is needed)
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if ($jdkImagePath) {
+            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
+            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue -Verbose
+            Write-Host "Debug symbol cleanup complete."
+          } else {
+            Write-Warning "Could not find JDK image directory under build/*/images/jdk to clean."
+          }
+        shell: pwsh
+
+      - name: Prepare Artifact Structure (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
-        working-directory: ${{ github.workspace }}
-        shell: pwsh
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          mkdir staging_artifact
-          cp -r build/*/images/jdk/* staging_artifact/
+          $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory under build/*/images/jdk"; exit 1 }
+          Write-Host "Found JDK source path: $jdkSourcePath"
+          $releaseFile = Join-Path $jdkSourcePath "release"
+          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file at $releaseFile"; exit 1 }
+          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
+          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
+          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION from $releaseFile"; exit 1 }
+          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
+          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
+          $targetDirName = "corretto-21-lilliput-${javaVersion}"
+          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
+          if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
+          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
+          Write-Host "Moving contents of $jdkSourcePath to $fullTargetPathInStaging"
+          Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
+          Write-Host "Artifact prepared in staging directory: $stagingDir for JDK version $javaVersion"
+        shell: pwsh
 
-      # 10. Upload the built JDK as an artifact
-      - name: Upload Build Artifacts
+      - name: Upload Windows JDK Build Artifact (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: corretto-latest-jdk
+          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
-
-      # 11. Update the “last built” repository variable with the new SHA
-      - name: Update Last Built SHA Variable
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.MY_PAT }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const varName = process.env.TARGET_VARIABLE_NAME;
-            const varValue = process.env.NEW_SHA_TO_SAVE;
-            await github.rest.actions.createOrUpdateRepoVariable({
-              owner,
-              repo,
-              name: varName,
-              value: varValue
-            });
+          
+      - name: Update GitHub Repository Variable with PAT
+        if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          TARGET_VARIABLE_NAME: ${{ env.GITHUB_VARIABLE_NAME }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+          RAW_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
+          SANITIZED_GITHUB_REPOSITORY="${RAW_GITHUB_REPOSITORY%%$'\r'}"
+          echo "Raw github.repository: '${RAW_GITHUB_REPOSITORY}'"
+          echo "Sanitized github.repository: '${SANITIZED_GITHUB_REPOSITORY}'"
+          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${SANITIZED_GITHUB_REPOSITORY}"
+          GH_VAR_SET_EXIT_CODE=$?
+          if [ ${GH_VAR_SET_EXIT_CODE} -eq 0 ]; then
+            echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
+          else
+            echo "::error title=Variable Set Failed (gh variable set)::Failed to update GitHub variable '${TARGET_VARIABLE_NAME}'. 'gh variable set' exited with code ${GH_VAR_SET_EXIT_CODE}."
+            # gh variable set should print errors to stderr, which will appear in the logs.
+            exit 1
+          fi
+        shell: bash
