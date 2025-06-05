@@ -11,7 +11,6 @@ env:
   CORRETTO_SOURCE_DIR: corretto_source_checkout
   # Pin versions for security
   CYGWIN_VERSION: "3.4.10-1"
-  CHOCOLATEY_VERSION: "2.2.2"
 
 jobs:
   build_if_new_commits:
@@ -19,78 +18,29 @@ jobs:
     permissions:
       contents: read
       actions: read
-      # Use minimal permissions instead of PAT
       repository-projects: write  # For updating variables
     
     steps:
-      - name: Validate Environment Variables
-        run: |
-          # Input validation to prevent injection
-          if (-not ($env:UPSTREAM_REPO -match '^[a-zA-Z0-9._/-]+$')) {
-            Write-Error "Invalid UPSTREAM_REPO format"; exit 1
-          }
-          if (-not ($env:UPSTREAM_BRANCH -match '^[a-zA-Z0-9._/-]+$')) {
-            Write-Error "Invalid UPSTREAM_BRANCH format"; exit 1
-          }
-          Write-Host "Environment validation passed"
-        shell: pwsh
+      - name: Download Previous SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: last-built-sha
+          path: .
+        continue-on-error: true
 
-      - name: Read Last Built Upstream SHA from GitHub Variable
+      - name: Read Last Built SHA from Artifact
         id: read_last_sha
         run: |
-          # Sanitize variable name to prevent injection
-          $varName = "${{ env.GITHUB_VARIABLE_NAME }}" -replace '[^a-zA-Z0-9_]', ''
-          $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
-          
-          # Validate SHA format
-          if ($sha_from_var -and -not ($sha_from_var -match '^[a-f0-9]{40}$')) {
-            Write-Warning "Invalid SHA format in variable, treating as empty"
-            $sha_from_var = ""
+          LATEX_0_1749124113563sha_from_file = ""
+          if (Test-Path LATEX_1_1749124113563sha_from_file = (Get-Content LATEX_2_1749124113563sha_from_file -and -not (LATEX_3_1749124113563')) {
+          Write-Warning "Invalid SHA format, treating as empty"
+          LATEX_4_1749124113563sha_from_file" >> LATEX_5_1749124113563bootJdkWindows = LATEX_6_1749124113563bootJdkWindows -or -not (Test-Path LATEX_7_1749124113563bootJdkWindows'"; exit 1
           }
-          
-          echo "last_sha=$sha_from_var" >> $env:GITHUB_OUTPUT
-          Write-Host "Last built upstream SHA validated"
-        shell: pwsh
-
-      - name: Get Current Upstream SHA for Verified Repository
-        id: get_upstream_sha
-        run: |
-          # Use parameterized git commands to prevent injection
-          $repoUrl = "https://github.com/${{ env.UPSTREAM_REPO }}.git"
-          $branch = "${{ env.UPSTREAM_BRANCH }}"
-          
-          # Validate repository URL format
-          if (-not ($repoUrl -match '^https://github\.com/[a-zA-Z0-9._/-]+\.git$')) {
-            Write-Error "Invalid repository URL format"; exit 1
-          }
-          
-          # Create temporary directory with random name
-          $tempDir = "temp_upstream_$(Get-Random)"
-          
+          if (LATEX_8_1749124113563bootJdkWindows -notmatch '^[a-zA-Z]:') {
+          Write-Error "JAVA_HOME contains invalid characters: 'LATEX_9_1749124113563bootJdkWindows'"
           try {
-            # Use git with explicit parameters to prevent injection
-            git clone --depth 1 --single-branch --branch $branch $repoUrl $tempDir
-            if ($LASTEXITCODE -ne 0) { throw "Git clone failed" }
-            
-            Push-Location $tempDir
-            $current_sha = (git rev-parse HEAD).Trim()
-            Pop-Location
-            
-            # Validate SHA format
-            if (-not ($current_sha -match '^[a-f0-9]{40}$')) {
-              throw "Invalid SHA format returned"
-            }
-            
-            echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
-            Write-Host "Current upstream SHA verified: $current_sha"
-          }
-          finally {
-            # Secure cleanup
-            if (Test-Path $tempDir) {
-              Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
-            }
-          }
-        shell: pwsh
+          LATEX_10_1749124113563bootJdkWindows").Trim()
+          if (-not LATEX_11_1749124113563bootJdkCygwin -match '[;&|`LATEX_12_1749124113563(LATEX_13_1749124113563configureCmd = "./configure --with-boot-jdk='LATEX_14_1749124113563configureCmd
 
       - name: Determine if Build is Needed
         id: check_build_condition
