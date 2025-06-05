@@ -41,7 +41,7 @@ jobs:
           try {
           LATEX_10_1749124113563bootJdkWindows").Trim())
           if (-not LATEX_11_1749124113563bootJdkCygwin -match '[;&|`LATEX_12_1749124113563(LATEX_13_1749124113563configureCmd = "./configure --with-boot-jdk='LATEX_14_1749124113563configureCmd
-
+          )
       - name: Determine if Build is Needed
         id: check_build_condition
         run: |
