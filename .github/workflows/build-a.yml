@@ -196,21 +196,13 @@ jobs:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
           TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
-          # Pass github.repository as a separate env var to sanitize it
           RAW_GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           echo "Attempting to update GitHub variable '${TARGET_VARIABLE_NAME}' to '${NEW_SHA_TO_SAVE}' using 'gh variable set' with PAT"
-          
-          # Sanitize RAW_GITHUB_REPOSITORY to remove any trailing CR characters
-          # The parameter expansion ${VAR%%PATTERN} removes the longest match of PATTERN from the end of VAR.
-          # '\r' is the carriage return.
           SANITIZED_GITHUB_REPOSITORY="${RAW_GITHUB_REPOSITORY%%$'\r'}"
-          
           echo "Raw github.repository: '${RAW_GITHUB_REPOSITORY}'"
           echo "Sanitized github.repository: '${SANITIZED_GITHUB_REPOSITORY}'"
-
           gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${SANITIZED_GITHUB_REPOSITORY}"
-
           GH_VAR_SET_EXIT_CODE=$?
           if [ ${GH_VAR_SET_EXIT_CODE} -eq 0 ]; then
             echo "GitHub variable '${TARGET_VARIABLE_NAME}' updated successfully via 'gh variable set'."
