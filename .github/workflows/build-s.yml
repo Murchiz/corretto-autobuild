@@ -142,6 +142,29 @@ jobs:
           Write-Host "Checkout integrity verified"
         shell: pwsh
 
+      - name: Update GitHub Repository Variable Securely
+        if: steps.check_build_condition.outputs.needs_build == 'true' && success()
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}  # Use built-in token instead of PAT
+        run: |
+          # Validate SHA format before saving
+          if [[ ! "$NEW_SHA_TO_SAVE" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Invalid SHA format for variable update"
+            exit 1
+          fi
+          
+          echo "Updating GitHub variable securely"
+          
+          # Use GitHub CLI with built-in token (more secure than PAT)
+          if gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"; then
+            echo "GitHub variable updated successfully"
+          else
+            echo "::error::Failed to update GitHub variable"
+            exit 1
+          fi
+        shell: bash
+
       - name: Set up Corretto 21 as Bootstrap JDK (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
@@ -383,25 +406,4 @@ jobs:
           path: staging_artifact/
           retention-days: 30  # Limit retention for security
 
-      - name: Update GitHub Repository Variable Securely
-        if: steps.check_build_condition.outputs.needs_build == 'true' && success()
-        env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GITHUB_TOKEN: ${{ github.token }}  # Use built-in token instead of PAT
-        run: |
-          # Validate SHA format before saving
-          if [[ ! "$NEW_SHA_TO_SAVE" =~ ^[a-f0-9]{40}$ ]]; then
-            echo "::error::Invalid SHA format for variable update"
-            exit 1
-          fi
-          
-          echo "Updating GitHub variable securely"
-          
-          # Use GitHub CLI with built-in token (more secure than PAT)
-          if gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"; then
-            echo "GitHub variable updated successfully"
-          else
-            echo "::error::Failed to update GitHub variable"
-            exit 1
-          fi
-        shell: bash
+
