@@ -125,6 +125,13 @@ jobs:
           echo "Visual Studio C++ workload check/install complete (or attempted)."
         shell: pwsh
 
+      - name: Cache Cygwin Packages
+        uses: actions/cache@v4
+        with:
+          path: C:\cygwin64
+          key: cygwin-${{ runner.os }}-${{ hashFiles('**/install-cygwin-step') }}
+          restore-keys: cygwin-${{ runner.os }}-
+
       - name: Install Cygwin with necessary packages (if build is needed)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         run: |
