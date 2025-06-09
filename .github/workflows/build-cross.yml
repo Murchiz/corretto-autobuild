@@ -18,7 +18,7 @@ jobs:
         mkdir Bdir
         cd C:\Bdir
         Invoke-WebRequest -Uri https://cloud.debian.org/images/cloud/bookworm-backports/20250609-2138/debian-12-backports-generic-amd64-20250609-2138.tar.xz -OutFile debian.tar.xz -UseBasicParsing
-        wsl --import Debian C:\Bdir  .\debian.tar.xz
+        wsl --import Debian C:\Bdir .\debian.tar.xz
 
     - name: depenched
       run: |
