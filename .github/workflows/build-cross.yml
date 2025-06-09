@@ -1,17 +1,16 @@
-name: Cross-compile Corretto 21 for Windows
+name: Cross-compile Corretto 21 for Windows from WSL
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch:
+      - main # Or any other branch you want to trigger the build from
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout Corretto repository
-      uses: actions/checkout@v4
+    - name: Checkout Corretto source code
+      uses: actions/checkout@v3
       with:
         repository: corretto/corretto-21
         ref: lilliput-2
@@ -19,33 +18,28 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y autoconf build-essential libx11-dev libxext-dev libxrender-dev libxrandr-dev libxtst-dev libxt-dev libcups2-dev libfontconfig1-dev libasound2-dev mingw-w64
+        sudo apt-get install -y autoconf make zip unzip build-essential
 
-    - name: Install boot JDK (Corretto 20)
+    - name: Download Windows Boot JDK
       run: |
-        wget https://corretto.aws/downloads/latest/amazon-corretto-20-x64-linux-jdk.tar.gz -O amazon-corretto-20-x64-linux-jdk.tar.gz
-        tar -xzf amazon-corretto-20-x64-linux-jdk.tar.gz
-        echo "BOOT_JDK=$PWD/$(ls -d amazon-corretto-20*linux-x64)" >> $GITHUB_ENV
+        wget -O boot-jdk.zip https://corretto.aws/downloads/latest/amazon-corretto-21-x64-windows-jdk.zip
+        unzip boot-jdk.zip -d boot-jdk
+        # The actual path to the JDK might be nested inside the unzipped folder
+        # We'll find it and move it to a known location
+        JDK_PATH=$(find boot-jdk -name "jdk*" -type d | head -n 1)
+        mv $JDK_PATH /opt/boot-jdk
 
-    - name: (FIX) Create dummy cygpath and wslpath to satisfy configure script
-      run: |
-        mkdir -p $HOME/bin
-        echo -e '#!/bin/sh\necho "$@"' | tee $HOME/bin/cygpath > /dev/null
-        chmod +x $HOME/bin/cygpath
-        ln -s $HOME/bin/cygpath $HOME/bin/wslpath
-        echo "$HOME/bin" >> $GITHUB_PATH
 
-    - name: Configure the build for Windows cross-compilation
+    - name: Configure the build
       run: |
-        bash ./configure --with-boot-jdk=${{ env.BOOT_JDK }} \
-                        --openjdk-target=x86_64-w64-mingw32 \
-                        --with-toolchain-type=gcc
+        bash configure --with-boot-jdk=/opt/boot-jdk
 
     - name: Build Corretto
-      run: make images
+      run: |
+        make images
 
-    - name: Archive the build artifacts
-      uses: actions/upload-artifact@v4
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
       with:
-        name: corretto-21-windows-x64
-        path: build/windows-x86_64-server-release/images/jdk
+        name: corretto-21-windows
+        path: build/*/images/jdk
