@@ -24,8 +24,8 @@ jobs:
 
     - name: depenched
       run: |
-          ubuntu.exe sudo apt-get update
-          ubuntu.exe sudo apt-get install -y autoconf make gcc g++ libX11-dev libXext-dev libXrender-dev libXtst-dev libXt-dev libasound2-dev libcups2-dev libfontconfig1-dev openjdk-17-jdk
+          Ubuntu.exe sudo apt-get update
+          Ubuntu.exe sudo apt-get install -y autoconf make gcc g++ libX11-dev libXext-dev libXrender-dev libXtst-dev libXt-dev libasound2-dev libcups2-dev libfontconfig1-dev openjdk-17-jdk
     - name: Configure and build in WSL
       run: |
         ubuntu.exe bash -c "cd $(wslpath '$GITHUB_WORKSPACE') && bash configure --with-debug-level=release --with-target-bits=64 && make"
