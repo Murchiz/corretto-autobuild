@@ -1,68 +1,74 @@
-name: Cross-compile Corretto 21 for Windows from WSL
+name: Cross-Compile Corretto 21 for Windows
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main # Or any other branch you want to trigger the build from
+    branches: [lilliput-2]
+  pull_request:
+    branches: [lilliput-2]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  cross-compile:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
     steps:
-    - name: Checkout Corretto source code
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
         repository: corretto/corretto-21
         ref: lilliput-2
+        submodules: recursive
 
-    - name: Setup Java for the build environment
-      uses: actions/setup-java@v4
-      with:
-          distribution: 'temurin'
-          java-version: '21'
+    - name: Set up WSL
+      run: wsl --install -d Ubuntu-22.04
 
-    - name: Install build dependencies
+    - name: Configure and build in WSL
+      shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y autoconf make zip unzip build-essential wget
+        wsl -e bash -c "
+        # Install dependencies
+        sudo apt-get update -y
+        sudo apt-get install -y autoconf build-essential libx11-dev libxext-dev \
+            libxrender-dev libxrandr-dev libxtst-dev libxt-dev libcups2-dev \
+            libfontconfig1-dev libasound2-dev libfreetype6-dev zip
 
-    # Definitive fix for the Windows Boot JDK setup
-    - name: Download and setup Windows Boot JDK
-      run: |
-        # Download the JDK
-        wget -O boot-jdk.zip https://corretto.aws/downloads/latest/amazon-corretto-21-x64-windows-jdk.zip
-        
-        # Unzip to a temporary directory
-        unzip -q boot-jdk.zip -d boot-jdk-unzipped
-        
-        # For debugging: List the contents to see the actual folder name
-        echo "Contents of boot-jdk-unzipped:"
-        ls -l boot-jdk-unzipped
-        
-        # Find the full path of the single directory inside the unzipped folder
-        JDK_DIR_PATH=$(find boot-jdk-unzipped -maxdepth 1 -mindepth 1 -type d)
-        
-        # Move that found directory to be /opt/boot-jdk. This is a rename, not moving *into*.
-        sudo mv "$JDK_DIR_PATH" /opt/boot-jdk
-        
-        # Final verification that should now succeed
-        echo "Verifying /opt/boot-jdk/bin/java exists:"
-        ls -l /opt/boot-jdk/bin/java
+        # Install cross-compilation toolchain
+        sudo apt-get install -y g++-mingw-w64
 
-    - name: Configure the build for cross-compilation
-      run: |
-        # Explicitly define the build, host, and target platforms for clarity
-        bash configure --with-boot-jdk=/opt/boot-jdk \
-                       --with-toolchain-variant=x86_64-w64-mingw32 \
-                       --with-target-bits=64 \
-                       --with-jvm-variants=server
-    
-    - name: Build Corretto
-      run: |
+        # Configure environment
+        export LANG=C
+        export PATH=/usr/bin:/bin:\$PATH
+
+        # Bootstrap freetype
+        cd \$HOME
+        wget https://download.savannah.gnu.org/releases/freetype/freetype-2.13.0.tar.xz
+        tar -xf freetype-2.13.0.tar.xz
+        cd freetype-2.13.0
+        ./configure --prefix=/usr/x86_64-w64-mingw32 \
+                    --host=x86_64-w64-mingw32 \
+                    --enable-static \
+                    --disable-shared
+        make
+        sudo make install
+
+        # Build Corretto
+        cd ${{ github.workspace }}
+        bash configure --openjdk-target=x86_64-w64-mingw32 \
+                      --with-toolchain-type=gcc \
+                      --with-freetype=/usr/x86_64-w64-mingw32 \
+                      --with-jvm-variants=server \
+                      --disable-warnings-as-errors
+
         make images
 
+        # Package results
+        cd build/windows-x86_64-server-release/images/jdk
+        zip -r ${{ github.workspace }}/corretto-21-windows.zip .
+        "
+
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: corretto-21-windows
-        path: build/linux-x86_64-server-release/images/jdk
+        path: ${{ github.workspace }}/corretto-21-windows.zip
