@@ -1,8 +1,6 @@
 name: Build Corretto 21 (lilliput-2) for Windows
 
 on:
-  schedule:
-    - cron: '0 5 * * 1'
   workflow_dispatch:
 
 env:
