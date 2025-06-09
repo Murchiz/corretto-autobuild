@@ -26,14 +26,21 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y autoconf make zip unzip build-essential wget
 
-    # This is the crucial step to fix the error
+    # Corrected step to download and setup the Windows Boot JDK
     - name: Download and setup Windows Boot JDK
       run: |
+        # Download the JDK
         wget -O boot-jdk.zip https://corretto.aws/downloads/latest/amazon-corretto-21-x64-windows-jdk.zip
-        unzip -q boot-jdk.zip -d boot-jdk-unzipped
-        # Find the actual JDK directory, as it's often nested
-        JDK_PATH=$(find boot-jdk-unzipped -name "jdk*" -type d | head -n 1)
-        sudo mv $JDK_PATH /opt/boot-jdk
+        
+        # Create the target directory
+        sudo mkdir -p /opt/boot-jdk
+        
+        # Unzip directly into the target directory, removing the top-level folder from the zip archive
+        sudo unzip -q boot-jdk.zip -d /opt/boot-jdk --strip-components=1
+        
+        # Add a verification step for debugging
+        echo "Verifying contents of /opt/boot-jdk:"
+        sudo ls -l /opt/boot-jdk/bin
 
     - name: Configure the build for cross-compilation
       run: |
