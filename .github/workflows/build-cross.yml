@@ -68,7 +68,7 @@ jobs:
         "
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: corretto-21-windows
         path: ${{ github.workspace }}/corretto-21-windows.zip
