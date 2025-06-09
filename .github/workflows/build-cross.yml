@@ -1,74 +1,28 @@
-name: Cross-Compile Corretto 21 for Windows
+name: Build Corretto 21 on Windows using WSL
 
 on:
-  workflow_dispatch:
   push:
-    branches: [lilliput-2]
-  pull_request:
-    branches: [lilliput-2]
+    branches:
+      - lilliput-2
 
 jobs:
-  cross-compile:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 120
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        repository: corretto/corretto-21
         ref: lilliput-2
-        submodules: recursive
-
-    - name: Set up WSL
-      run: wsl --install -d Ubuntu-22.04
-
-    - name: Configure and build in WSL
-      shell: bash
+    - name: Install dependencies in WSL
       run: |
-        wsl -e bash -c "
-        # Install dependencies
-        sudo apt-get update -y
-        sudo apt-get install -y autoconf build-essential libx11-dev libxext-dev \
-            libxrender-dev libxrandr-dev libxtst-dev libxt-dev libcups2-dev \
-            libfontconfig1-dev libasound2-dev libfreetype6-dev zip
-
-        # Install cross-compilation toolchain
-        sudo apt-get install -y g++-mingw-w64
-
-        # Configure environment
-        export LANG=C
-        export PATH=/usr/bin:/bin:\$PATH
-
-        # Bootstrap freetype
-        cd \$HOME
-        wget https://download.savannah.gnu.org/releases/freetype/freetype-2.13.0.tar.xz
-        tar -xf freetype-2.13.0.tar.xz
-        cd freetype-2.13.0
-        ./configure --prefix=/usr/x86_64-w64-mingw32 \
-                    --host=x86_64-w64-mingw32 \
-                    --enable-static \
-                    --disable-shared
-        make
-        sudo make install
-
-        # Build Corretto
-        cd ${{ github.workspace }}
-        bash configure --openjdk-target=x86_64-w64-mingw32 \
-                      --with-toolchain-type=gcc \
-                      --with-freetype=/usr/x86_64-w64-mingw32 \
-                      --with-jvm-variants=server \
-                      --disable-warnings-as-errors
-
-        make images
-
-        # Package results
-        cd build/windows-x86_64-server-release/images/jdk
-        zip -r ${{ github.workspace }}/corretto-21-windows.zip .
-        "
-
-    - name: Upload artifact
+        wsl sudo apt-get update
+        wsl sudo apt-get install -y autoconf make gcc g++ libX11-dev libXext-dev libXrender-dev libXtst-dev libXt-dev libasound2-dev libcups2-dev libfontconfig1-dev openjdk-17-jdk
+    - name: Configure and build in WSL
+      run: |
+        wsl bash -c "cd $(wslpath '$GITHUB_WORKSPACE') && bash configure --with-debug-level=release --with-target-bits=64 && make"
+    - name: Archive build artifacts
+      if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: corretto-21-windows
-        path: ${{ github.workspace }}/corretto-21-windows.zip
+        name: corretto-21-lilliput-2
+        path: ${{ github.workspace }}/build/linux-x86_64-normal-server-release
