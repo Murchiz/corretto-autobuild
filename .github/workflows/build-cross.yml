@@ -26,7 +26,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y autoconf make zip unzip build-essential wget
 
-    # Corrected step to robustly download, unzip, and move the Windows Boot JDK
+    # Definitive fix for the Windows Boot JDK setup
     - name: Download and setup Windows Boot JDK
       run: |
         # Download the JDK
@@ -35,23 +35,27 @@ jobs:
         # Unzip to a temporary directory
         unzip -q boot-jdk.zip -d boot-jdk-unzipped
         
-        # For debugging: List the contents of the temporary directory to see the actual folder name
+        # For debugging: List the contents to see the actual folder name
         echo "Contents of boot-jdk-unzipped:"
         ls -l boot-jdk-unzipped
         
-        # Move the single nested directory to be /opt/boot-jdk.
-        # This wildcard (*) is more robust and will match whatever the top-level directory is named.
-        sudo mv boot-jdk-unzipped/* /opt/boot-jdk
+        # Find the full path of the single directory inside the unzipped folder
+        JDK_DIR_PATH=$(find boot-jdk-unzipped -maxdepth 1 -mindepth 1 -type d)
         
-        # Verification step for debugging
-        echo "Verifying final path /opt/boot-jdk:"
-        ls -l /opt/boot-jdk
-        echo "Verifying bin directory exists:"
-        ls -l /opt/boot-jdk/bin
+        # Move that found directory to be /opt/boot-jdk. This is a rename, not moving *into*.
+        sudo mv "$JDK_DIR_PATH" /opt/boot-jdk
+        
+        # Final verification that should now succeed
+        echo "Verifying /opt/boot-jdk/bin/java exists:"
+        ls -l /opt/boot-jdk/bin/java
 
     - name: Configure the build for cross-compilation
       run: |
-        bash configure --with-boot-jdk=/opt/boot-jdk --build=x86_64-pc-linux-gnu --host=x86_64-pc-linux-gnu --target=x86_64-w64-mingw32
+        # Explicitly define the build, host, and target platforms for clarity
+        bash configure --with-boot-jdk=/opt/boot-jdk \
+                       --with-toolchain-variant=x86_64-w64-mingw32 \
+                       --with-target-bits=64 \
+                       --with-jvm-variants=server
     
     - name: Build Corretto
       run: |
