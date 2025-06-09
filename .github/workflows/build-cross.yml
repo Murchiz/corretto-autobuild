@@ -14,20 +14,31 @@ jobs:
       with:
         repository: corretto/corretto-21
         ref: lilliput-2
-    - uses: actions/setup-java@v4
+
+    - name: Setup Java for the build environment
+      uses: actions/setup-java@v4
       with:
-          distribution: 'temurin' # See 'Supported distributions' for available options
+          distribution: 'temurin'
           java-version: '21'
 
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y autoconf make zip unzip build-essential
+        sudo apt-get install -y autoconf make zip unzip build-essential wget
 
-    - name: Configure the build
+    # This is the crucial step to fix the error
+    - name: Download and setup Windows Boot JDK
       run: |
-        bash configure --with-boot-jdk=/opt/boot-jdk
+        wget -O boot-jdk.zip https://corretto.aws/downloads/latest/amazon-corretto-21-x64-windows-jdk.zip
+        unzip -q boot-jdk.zip -d boot-jdk-unzipped
+        # Find the actual JDK directory, as it's often nested
+        JDK_PATH=$(find boot-jdk-unzipped -name "jdk*" -type d | head -n 1)
+        sudo mv $JDK_PATH /opt/boot-jdk
 
+    - name: Configure the build for cross-compilation
+      run: |
+        bash configure --with-boot-jdk=/opt/boot-jdk --with-target-bits=64 --with-jvm-variants=server
+    
     - name: Build Corretto
       run: |
         make images
@@ -36,4 +47,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: corretto-21-windows
-        path: build/*/images/jdk
+        path: build/linux-x86_64-server-release/images/jdk
