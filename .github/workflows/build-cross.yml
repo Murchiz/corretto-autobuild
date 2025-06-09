@@ -26,21 +26,24 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y autoconf make zip unzip build-essential wget
 
-    # Corrected step to download and setup the Windows Boot JDK
+    # Corrected step to robustly download, unzip, and move the Windows Boot JDK
     - name: Download and setup Windows Boot JDK
       run: |
         # Download the JDK
         wget -O boot-jdk.zip https://corretto.aws/downloads/latest/amazon-corretto-21-x64-windows-jdk.zip
         
-        # Create the target directory
-        sudo mkdir -p /opt/boot-jdk
+        # Unzip to a temporary directory first
+        unzip -q boot-jdk.zip -d boot-jdk-unzipped
         
-        # Unzip directly into the target directory, removing the top-level folder from the zip archive
-        sudo unzip -q boot-jdk.zip -d /opt/boot-jdk --strip-components=1
+        # Move the nested JDK directory (e.g., jdk-21.0.8) to be /opt/boot-jdk
+        # The glob 'jdk-*' will match the single directory inside the unzipped folder.
+        sudo mv boot-jdk-unzipped/jdk-* /opt/boot-jdk
         
-        # Add a verification step for debugging
-        echo "Verifying contents of /opt/boot-jdk:"
-        sudo ls -l /opt/boot-jdk/bin
+        # Verification step for debugging
+        echo "Verifying final path /opt/boot-jdk:"
+        ls -l /opt/boot-jdk
+        echo "Verifying bin directory exists:"
+        ls -l /opt/boot-jdk/bin
 
     - name: Configure the build for cross-compilation
       run: |
