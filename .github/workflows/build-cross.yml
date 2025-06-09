@@ -14,18 +14,15 @@ jobs:
       with:
         repository: corretto/corretto-21
         ref: lilliput-2
-
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y autoconf make zip unzip build-essential
-
-    - name: Download Windows Boot JDK
     - uses: actions/setup-java@v4
       with:
           distribution: 'temurin' # See 'Supported distributions' for available options
           java-version: '21'
 
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y autoconf make zip unzip build-essential
 
     - name: Configure the build
       run: |
