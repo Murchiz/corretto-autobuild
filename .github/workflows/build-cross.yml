@@ -1,9 +1,7 @@
 name: Build Corretto 21 on Windows using WSL
 
 on:
-  push:
-    branches:
-      - lilliput-2
+    workflow_dispatch: 
 
 jobs:
   build:
