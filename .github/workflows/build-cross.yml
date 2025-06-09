@@ -10,6 +10,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
+        repository: corretto/corretto-21
         ref: lilliput-2
     - name: Install dependencies in WSL
       run: |
