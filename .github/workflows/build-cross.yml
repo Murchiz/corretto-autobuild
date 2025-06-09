@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Corretto source code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: corretto/corretto-21
         ref: lilliput-2
@@ -39,7 +39,7 @@ jobs:
         make images
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: corretto-21-windows
         path: build/*/images/jdk
