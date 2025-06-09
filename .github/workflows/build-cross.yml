@@ -28,11 +28,14 @@ jobs:
         echo "BOOT_JDK=$PWD/$(ls -d amazon-corretto-20*linux-x64)" >> $GITHUB_ENV
 
     - name: Configure the build for Windows cross-compilation
+      env:
+        CC: x86_64-w64-mingw32-gcc
+        CXX: x86_64-w64-mingw32-g++
+        RC: x86_64-w64-mingw32-windres
       run: |
         bash ./configure --with-boot-jdk=${{ env.BOOT_JDK }} \
                         --openjdk-target=x86_64-w64-mingw32 \
-                        --with-toolchain-type=gcc \
-                        --with-windows-environment-type=direct
+                        --with-toolchain-type=gcc
 
     - name: Build Corretto
       run: make images
