@@ -32,12 +32,16 @@ jobs:
         # Download the JDK
         wget -O boot-jdk.zip https://corretto.aws/downloads/latest/amazon-corretto-21-x64-windows-jdk.zip
         
-        # Unzip to a temporary directory first
+        # Unzip to a temporary directory
         unzip -q boot-jdk.zip -d boot-jdk-unzipped
         
-        # Move the nested JDK directory (e.g., jdk-21.0.8) to be /opt/boot-jdk
-        # The glob 'jdk-*' will match the single directory inside the unzipped folder.
-        sudo mv boot-jdk-unzipped/jdk-* /opt/boot-jdk
+        # For debugging: List the contents of the temporary directory to see the actual folder name
+        echo "Contents of boot-jdk-unzipped:"
+        ls -l boot-jdk-unzipped
+        
+        # Move the single nested directory to be /opt/boot-jdk.
+        # This wildcard (*) is more robust and will match whatever the top-level directory is named.
+        sudo mv boot-jdk-unzipped/* /opt/boot-jdk
         
         # Verification step for debugging
         echo "Verifying final path /opt/boot-jdk:"
@@ -47,7 +51,7 @@ jobs:
 
     - name: Configure the build for cross-compilation
       run: |
-        bash configure --with-boot-jdk=/opt/boot-jdk --with-target-bits=64 --with-jvm-variants=server
+        bash configure --with-boot-jdk=/opt/boot-jdk --build=x86_64-pc-linux-gnu --host=x86_64-pc-linux-gnu --target=x86_64-w64-mingw32
     
     - name: Build Corretto
       run: |
