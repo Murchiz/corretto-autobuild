@@ -27,11 +27,15 @@ jobs:
         tar -xzf amazon-corretto-20-x64-linux-jdk.tar.gz
         echo "BOOT_JDK=$PWD/$(ls -d amazon-corretto-20*linux-x64)" >> $GITHUB_ENV
 
+    - name: (FIX) Create dummy cygpath and wslpath to satisfy configure script
+      run: |
+        mkdir -p $HOME/bin
+        echo -e '#!/bin/sh\necho "$@"' | tee $HOME/bin/cygpath > /dev/null
+        chmod +x $HOME/bin/cygpath
+        ln -s $HOME/bin/cygpath $HOME/bin/wslpath
+        echo "$HOME/bin" >> $GITHUB_PATH
+
     - name: Configure the build for Windows cross-compilation
-      env:
-        CC: x86_64-w64-mingw32-gcc
-        CXX: x86_64-w64-mingw32-g++
-        RC: x86_64-w64-mingw32-windres
       run: |
         bash ./configure --with-boot-jdk=${{ env.BOOT_JDK }} \
                         --openjdk-target=x86_64-w64-mingw32 \
