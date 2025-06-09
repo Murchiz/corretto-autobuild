@@ -23,13 +23,16 @@ jobs:
 
     - name: Install boot JDK (Corretto 20)
       run: |
-        wget https://corretto.aws/downloads/latest/amazon-corretto-20-x64-linux-jdk.tar.gz
+        wget https://corretto.aws/downloads/latest/amazon-corretto-20-x64-linux-jdk.tar.gz -O amazon-corretto-20-x64-linux-jdk.tar.gz
         tar -xzf amazon-corretto-20-x64-linux-jdk.tar.gz
-        echo "BOOT_JDK=$PWD/amazon-corretto-20.0.2.9.1-linux-x64" >> $GITHUB_ENV
+        echo "BOOT_JDK=$PWD/$(ls -d amazon-corretto-20*linux-x64)" >> $GITHUB_ENV
 
     - name: Configure the build for Windows cross-compilation
       run: |
-        bash ./configure --with-boot-jdk=${{ env.BOOT_JDK }} --openjdk-target=x86_64-w64-mingw32 --with-toolchain-type=gcc
+        bash ./configure --with-boot-jdk=${{ env.BOOT_JDK }} \
+                        --openjdk-target=x86_64-w64-mingw32 \
+                        --with-toolchain-type=gcc \
+                        --with-windows-environment-type=direct
 
     - name: Build Corretto
       run: make images
