@@ -14,6 +14,8 @@ jobs:
         ref: lilliput-2
     - name: Install WSL
       run: |
+        cd C:\
+        mkdir Bdir
         cd C:\Bdir
         Invoke-WebRequest -Uri https://cloud.debian.org/images/cloud/bookworm-backports/20250609-2138/debian-12-backports-generic-amd64-20250609-2138.tar.xz -OutFile debian.tar.xz -UseBasicParsing
         wsl --import Debian .\  .\debian.tar.xz
