@@ -35,7 +35,7 @@ jobs:
           cd ..
           Remove-Item -Recurse -Force temp_upstream_checkout
           Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'"
-          echo "sha=$current_sha_ps_var" >> $GITHUB_OUTPUT
+          echo "sha=$current_sha_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
       - name: Determine if Build is Needed
         id: check_build_condition
@@ -52,7 +52,7 @@ jobs:
           } else {
             Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed for scheduled run."
           }
-          echo "needs_build=$needs_build_ps_var" >> $GITHUB_OUTPUT
+          echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
       # This step is unchanged.
