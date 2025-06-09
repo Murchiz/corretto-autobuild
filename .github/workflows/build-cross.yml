@@ -1,0 +1,39 @@
+name: Cross-compile Corretto 21 for Windows
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Corretto repository
+      uses: actions/checkout@v4
+      with:
+        repository: corretto/corretto-21
+        ref: lilliput-2
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y autoconf build-essential libx11-dev libxext-dev libxrender-dev libxrandr-dev libxtst-dev libxt-dev libcups2-dev libfontconfig1-dev libasound2-dev mingw-w64
+
+    - name: Install boot JDK
+      run: |
+        sudo apt-get install -y openjdk-21-jdk
+        export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+
+    - name: Configure the build for Windows cross-compilation
+      run: |
+        bash ./configure --with-boot-jdk=/usr/lib/jvm/java-17-openjdk-amd64 --with-toolchain-type=gcc --with-target-bits=64 --build=x86_64-linux-gnu --host=x86_64-w64-mingw32 --target=x86_64-w64-mingw32
+    - name: Build Corretto
+      run: make images
+
+    - name: Archive the build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: corretto-21-windows-x64
+        path: build/linux-x86_64-server-release/images/jdk
