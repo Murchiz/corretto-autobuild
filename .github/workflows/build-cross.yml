@@ -21,6 +21,7 @@ jobs:
         tar -xf .\Ubuntu_2204.1.7.0_x64.appx -C "C:\Users\runneradmin\AppData\Local"
         $userenv = [System.Environment]::GetEnvironmentVariable("Path", "User")
         [System.Environment]::SetEnvironmentVariable("PATH", $userenv + ";$env:USERPROFILE\AppData\Local\UbuntuWSL", "User")
+        ls $env:USERPROFILE\AppData\Local\UbuntuWSL
 
     - name: depenched
       run: |
