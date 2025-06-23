@@ -16,7 +16,6 @@ jobs:
       contents: read
       actions: read
     steps:
-
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
