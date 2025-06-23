@@ -17,7 +17,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      # This group of steps is fast and remains unchanged.
+
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
@@ -25,6 +25,7 @@ jobs:
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
           Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
         shell: pwsh
+
       - name: Get Current Upstream SHA for ${{ env.UPSTREAM_BRANCH }}
         id: get_upstream_sha
         run: |
@@ -37,6 +38,7 @@ jobs:
           Write-Host "Current upstream SHA determined for ${{ env.UPSTREAM_BRANCH }}: '$current_sha_ps_var'"
           echo "sha=$current_sha_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
+
       - name: Determine if Build is Needed
         id: check_build_condition
         run: |
@@ -55,7 +57,6 @@ jobs:
           echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
-      # This step is unchanged.
       - name: Update GitHub Repository Variable with PAT
         if: steps.check_build_condition.outputs.needs_build == 'true' && success()
         env:
@@ -66,8 +67,7 @@ jobs:
           gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
 
-      # This step is unchanged.
-      - name: Checkout Corretto source (if build is needed)
+      - name: Checkout Corretto source
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/checkout@v4
         with:
@@ -75,8 +75,7 @@ jobs:
           ref: ${{ steps.get_upstream_sha.outputs.sha }}
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
-      # This step is unchanged.
-      - name: Set up Corretto 21 as Bootstrap JDK (if build is needed)
+      - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
         with:
@@ -85,9 +84,6 @@ jobs:
           architecture: x64
         id: setup_jdk
 
-      # REMOVED: The Visual Studio Build Tools installation step is no longer needed.
-
-      # OPTIMIZED: Cache Cygwin installation between runs.
       - name: Cache Cygwin installation
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: cache-cygwin
@@ -96,7 +92,6 @@ jobs:
           path: C:\cygwin64
           key: ${{ runner.os }}-cygwin-packages-${{ hashFiles(env.CYGWIN_PACKAGES) }}
 
-      # OPTIMIZED: This step now only runs if the Cygwin cache was not found.
       - name: Install Cygwin with necessary packages (if not cached)
         if: steps.check_build_condition.outputs.needs_build == 'true' && steps.cache-cygwin.outputs.cache-hit != 'true'
         run: |
@@ -109,14 +104,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "Cygwin setup exited with code $LASTEXITCODE."; exit $LASTEXITCODE }
         shell: pwsh
 
-      # Add Cygwin to PATH (must run every time)
       - name: Add Cygwin to PATH
         if: steps.check_build_condition.outputs.needs_build == 'true'
         run: echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # The remaining build steps are unchanged.
-      - name: Configure Corretto Build (if build is needed)
+      - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
@@ -127,14 +120,14 @@ jobs:
           C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
         shell: pwsh
 
-      - name: Build Corretto (make images) (if build is needed)
+      - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           C:\cygwin64\bin\bash -c "make images"
         shell: pwsh
 
-      - name: Clean Debug Symbols from JDK Image (if build is needed)
+      - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
@@ -147,7 +140,7 @@ jobs:
           }
         shell: pwsh
 
-      - name: Prepare Artifact Structure (if build is needed)
+      - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -168,7 +161,7 @@ jobs:
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
         shell: pwsh
 
-      - name: Upload Windows JDK Build Artifact (if build is needed)
+      - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
