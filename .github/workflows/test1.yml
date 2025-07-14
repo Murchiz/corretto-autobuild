@@ -1,34 +1,39 @@
-name: Build Corretto 21 (lilliput-2) for Windows (Dont use this)
+name: Build Corretto 21 (lilliput-2) for Windows (Optimized)
 
 on:
   schedule:
-    - cron: '0 5 * * 1'
-  workflow_dispatch:
+    - cron: '0 5 * * 1' # Runs every Monday at 5 AM UTC
+  workflow_dispatch: # Allows manual runs
 
 env:
   UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake
+  # OPTIMIZATION: Added 'ccache' to the package list for build caching.
+  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake,ccache
+  # OPTIMIZATION: Configure the build to use ccache, which dramatically speeds up recompilation.
+  CC: "ccache gcc"
+  CXX: "ccache g++"
 
 jobs:
   build_if_new_commits:
     runs-on: windows-2025
     permissions:
       contents: read
-      actions: read
+      actions: write # Required to set repository variables
+
     steps:
       # 1. Read the Last Built Upstream SHA from GitHub Repository Variable
-      - name: Read Last Built Upstream SHA from GitHub Variable
+      - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
-          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
+          Write-Host "Last built upstream SHA read from variable: '$sha_from_var'"
         shell: pwsh
 
-      # 2. Checkout the upstream repository in one step (shallow clone)
+      # 2. Checkout the upstream repository (shallow clone)
       - name: Checkout upstream repository
         id: checkout_upstream
         uses: actions/checkout@v4
@@ -44,7 +49,7 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
-          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
+          Write-Host "Current upstream SHA: '$current_sha'"
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
@@ -54,31 +59,20 @@ jobs:
         run: |
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
-          $needs_build_ps_var = "false"
+          $needs_build = "false"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $needs_build_ps_var = "true"
-            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
+            $needs_build = "true"
+            Write-Host "Manual dispatch: Build is forced."
           } elseif ($last_sha -ne $current_sha) {
-            $needs_build_ps_var = "true"
+            $needs_build = "true"
             Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
           } else {
             Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
           }
-          echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
+          echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
-      # 5. Update GitHub Repository Variable with the new SHA (only if build is needed)
-      - name: Update GitHub Repository Variable with PAT
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }}
-          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
-        run: |
-          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
-        shell: bash
-
-      # 6. Set up Corretto 21 as Bootstrap JDK
+      # 5. Set up Corretto 21 as Bootstrap JDK
       - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
@@ -86,68 +80,78 @@ jobs:
           distribution: 'corretto'
           java-version: '21'
           architecture: x64
-        id: setup_jdk
 
-      # 7. Cache Cygwin installation (note: consider additional caches for build artifacts if beneficial)
+      # --- Caching Steps ---
+      
+      # 6. OPTIMIZATION: Cache the ccache directory to speed up rebuilds.
+      - name: Cache ccache directory
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: C:\cygwin64\home\runneradmin\.ccache
+          key: ${{ runner.os }}-ccache-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ github.ref }}-
+
+      # 7. OPTIMIZATION: Cache the Corretto build output directory.
+      - name: Cache Corretto build directory
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CORRETTO_SOURCE_DIR }}/build
+          key: ${{ runner.os }}-corretto-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-corretto-build-${{ github.ref }}-
+
+      # 8. Cache the Cygwin installation itself.
       - name: Cache Cygwin installation
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: cache-cygwin
         uses: actions/cache@v4
         with:
           path: C:\cygwin64
-          key: ${{ runner.os }}-cygwin-packages-${{ hashFiles(env.CYGWIN_PACKAGES) }}
+          # OPTIMIZATION: Corrected key to be sensitive to package list changes.
+          key: ${{ runner.os }}-cygwin-${{ env.CYGWIN_PACKAGES }}
 
-      # 8. Install Cygwin with necessary packages (only if not already cached)
-      - name: Install Cygwin with necessary packages (if not cached)
+      # --- Build Steps ---
+
+      # 9. Install Cygwin with necessary packages (only if not already cached)
+      - name: Install Cygwin with packages (if not cached)
         if: steps.check_build_condition.outputs.needs_build == 'true' && steps.cache-cygwin.outputs.cache-hit != 'true'
         run: |
           choco install cygwin --params "/InstallDir:C:\cygwin64 /NoAdmin" -y
           $cygwinSetupPath = "C:\cygwin64\cygwinsetup.exe"
-          if (-not (Test-Path $cygwinSetupPath -PathType Leaf)) { 
-            Write-Error "Cygwin setup executable ($cygwinSetupPath) not found!"; 
-            exit 1 
-          }
           $cygwinMirror = "https://mirrors.kernel.org/sourceware/cygwin/"
-          Write-Host "Installing Cygwin packages: $env.CYGWIN_PACKAGES"
-          Start-Process -FilePath $cygwinSetupPath -ArgumentList "-q -s $cygwinMirror -P $env:CYGWIN_PACKAGES" -Wait -NoNewWindow
-          if ($LASTEXITCODE -ne 0) { 
-            Write-Error "Cygwin setup exited with code $LASTEXITCODE."; 
-            exit $LASTEXITCODE 
-          }
+          Write-Host "Installing Cygwin packages: ${{ env.CYGWIN_PACKAGES }}"
+          Start-Process -FilePath $cygwinSetupPath -ArgumentList "-q -s $cygwinMirror -P ${{ env.CYGWIN_PACKAGES }}" -Wait -NoNewWindow
         shell: pwsh
 
-      # 9. Add Cygwin to PATH
+      # 10. Add Cygwin to PATH
       - name: Add Cygwin to PATH
         if: steps.check_build_condition.outputs.needs_build == 'true'
         run: echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # 10. Configure Corretto Build using the bootstrap JDK
+      # 11. Configure Corretto Build
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $BOOT_JDK_WINDOWS = $env:JAVA_HOME
-          if (-not $BOOT_JDK_WINDOWS) { 
-            Write-Error "Bootstrap JDK path from JAVA_HOME is empty!"; 
-            exit 1 
-          }
-          # Convert Windows path to Cygwin style
           $BOOT_JDK_CYGWIN = (& cygpath --unix $BOOT_JDK_WINDOWS).Trim()
           Write-Host "Using Bootstrap JDK (Cygwin path): $BOOT_JDK_CYGWIN"
           C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
         shell: pwsh
 
-      # 11. Build Corretto using parallel execution (using all available processors)
+      # 12. Build Corretto (make images) using parallel execution
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          # Use getconf to fetch the number of processors in Cygwin and run make in parallel.
           C:\cygwin64\bin\bash -c "make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
         shell: pwsh
 
-      # 12. Clean Debug Symbols from JDK Image
+      # 13. Clean Debug Symbols from JDK Image
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -156,34 +160,19 @@ jobs:
           if ($jdkImagePath) {
             Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
             Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Warning "Could not find JDK image directory to clean."
           }
         shell: pwsh
 
-      # 13. Prepare Artifact Structure (extract version info and repackage the build)
+      # 14. Prepare Artifact Structure
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) { 
-            Write-Error "Could not find source JDK image directory"; 
-            exit 1 
-          }
           $releaseFile = Join-Path $jdkSourcePath "release"
-          if (-not (Test-Path $releaseFile)) { 
-            Write-Error "Could not find release file at $releaseFile"; 
-            exit 1 
-          }
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
-          if (-not $javaVersion) { 
-            Write-Error "Could not parse JAVA_VERSION from release file"; 
-            exit 1 
-          }
-          Write-Host "Extracted JAVA_VERSION: $javaVersion"
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
@@ -193,10 +182,20 @@ jobs:
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
         shell: pwsh
 
-      # 14. Upload Windows JDK Build Artifact
+      # 15. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
+
+      # 16. OPTIMIZATION: Update the GitHub variable with the new SHA only after a successful build.
+      - name: Update GitHub Variable on Success
+        if: success() && steps.check_build_condition.outputs.needs_build == 'true'
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
+        shell: bash
