@@ -144,7 +144,7 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           # Use getconf to fetch the number of processors in Cygwin and run make in parallel.
-          C:\cygwin64\bin\bash -c "make JOBS\$(getconf _NPROCESSORS_ONLN) images"
+          C:\cygwin64\bin\bash -c "make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
         shell: pwsh
 
       # 12. Clean Debug Symbols from JDK Image
