@@ -1,4 +1,4 @@
-name: Build Corretto 21 (lilliput-2) for Windows (Test)
+name: Build Corretto 21 (lilliput-2) for Windows (Optimized)
 
 on:
   schedule:
@@ -10,11 +10,8 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  # OPTIMIZATION: Added 'ccache' to the package list for build caching.
+  # Added 'ccache' for build caching. We will enable it via the PATH method below.
   CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake,ccache
-  # OPTIMIZATION: Configure the build to use ccache, which dramatically speeds up recompilation.
-  CC: "ccache gcc"
-  CXX: "ccache g++"
 
 jobs:
   build_if_new_commits:
@@ -110,10 +107,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\cygwin64
-          # CORRECTED KEY: Hash the workflow file. If the package list changes, the hash changes, invalidating the cache.
           key: ${{ runner.os }}-cygwin-${{ hashFiles(github.workflow) }}
 
-      # --- Build Steps ---
+      # --- Build Environment Setup ---
 
       # 9. Install Cygwin with packages (if not cached)
       - name: Install Cygwin with packages (if not cached)
@@ -132,7 +128,15 @@ jobs:
         run: echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # 11. Configure Corretto Build
+      # 11. CORRECTED: Enable ccache by prepending its directory to the PATH
+      - name: Enable ccache by prepending to PATH
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        run: echo "C:\cygwin64\lib\ccache\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      # --- Build and Package Steps ---
+
+      # 12. Configure Corretto Build
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -143,7 +147,7 @@ jobs:
           C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
         shell: pwsh
 
-      # 12. Build Corretto (make images) using parallel execution
+      # 13. Build Corretto (make images) using parallel execution
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -151,7 +155,7 @@ jobs:
           C:\cygwin64\bin\bash -c "make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
         shell: pwsh
 
-      # 13. Clean Debug Symbols from JDK Image
+      # 14. Clean Debug Symbols from JDK Image
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -163,7 +167,7 @@ jobs:
           }
         shell: pwsh
 
-      # 14. Prepare Artifact Structure
+      # 15. Prepare Artifact Structure
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
@@ -182,7 +186,7 @@ jobs:
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
         shell: pwsh
 
-      # 15. Upload Windows JDK Build Artifact
+      # 16. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
@@ -190,7 +194,7 @@ jobs:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
 
-      # 16. Update the GitHub variable with the new SHA only after a successful build
+      # 17. Update the GitHub variable with the new SHA only after a successful build
       - name: Update GitHub Variable on Success
         if: success() && steps.check_build_condition.outputs.needs_build == 'true'
         env:
