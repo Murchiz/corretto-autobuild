@@ -1,4 +1,4 @@
-name: Build Corretto 21 (lilliput-2) for Windows (Optimized)
+name: Build Corretto 21 (lilliput-2) for Windows (Test)
 
 on:
   schedule:
@@ -83,7 +83,7 @@ jobs:
 
       # --- Caching Steps ---
       
-      # 6. OPTIMIZATION: Cache the ccache directory to speed up rebuilds.
+      # 6. Cache the ccache directory
       - name: Cache ccache directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
@@ -93,7 +93,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-${{ github.ref }}-
 
-      # 7. OPTIMIZATION: Cache the Corretto build output directory.
+      # 7. Cache the Corretto build output directory
       - name: Cache Corretto build directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
@@ -103,19 +103,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-corretto-build-${{ github.ref }}-
 
-      # 8. Cache the Cygwin installation itself.
+      # 8. Cache the Cygwin installation itself
       - name: Cache Cygwin installation
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: cache-cygwin
         uses: actions/cache@v4
         with:
           path: C:\cygwin64
-          # OPTIMIZATION: Corrected key to be sensitive to package list changes.
-          key: ${{ runner.os }}-cygwin-${{ env.CYGWIN_PACKAGES }}
+          # CORRECTED KEY: Hash the workflow file. If the package list changes, the hash changes, invalidating the cache.
+          key: ${{ runner.os }}-cygwin-${{ hashFiles(github.workflow) }}
 
       # --- Build Steps ---
 
-      # 9. Install Cygwin with necessary packages (only if not already cached)
+      # 9. Install Cygwin with packages (if not cached)
       - name: Install Cygwin with packages (if not cached)
         if: steps.check_build_condition.outputs.needs_build == 'true' && steps.cache-cygwin.outputs.cache-hit != 'true'
         run: |
@@ -190,7 +190,7 @@ jobs:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
 
-      # 16. OPTIMIZATION: Update the GitHub variable with the new SHA only after a successful build.
+      # 16. Update the GitHub variable with the new SHA only after a successful build
       - name: Update GitHub Variable on Success
         if: success() && steps.check_build_condition.outputs.needs_build == 'true'
         env:
