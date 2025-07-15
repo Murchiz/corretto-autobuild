@@ -1,21 +1,3 @@
-      # 17. Update the GitHub variable with the new SHA only after a successful build
-      - name: Update GitHub Variable on Success
-        if: success() && steps.check_build_condition.outputs.needs_build == 'true'
-        env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }}
-        run: |
-          # Use PowerShell's Trim() method to reliably remove any leading/trailing whitespace,
-          # including carriage returns ('\r') and newlines ('\n').
-          $repoName = "${{ github.repository }}".Trim()
-          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${{ env.NEW_SHA_TO_SAVE }}" --repo $repoName
-        shell: pwsh```
-
-This is the most reliable fix and should resolve the `invalid control character in URL` error for good.
-
-Here is the complete workflow with this final correction.
-
-```yaml
 name: Build Corretto 21 (lilliput-2) for Windows (Optimized)
 
 on:
@@ -219,8 +201,8 @@ jobs:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # CORRECTED: Use PowerShell's Trim() method to reliably remove any leading/trailing whitespace,
-          # including carriage returns ('\r') and newlines ('\n'), which prevents URL parsing errors.
-          $repoName = "${{ github.repository }}".Trim()
-          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${{ env.NEW_SHA_TO_SAVE }}" --repo $repoName
-        shell: pwsh```
+          # CORRECTED: Using PowerShell for this step to avoid shell-mixing issues with line endings.
+          # The .Trim() method correctly handles any trailing whitespace/newlines from the environment variable.
+          $repoName = $env:GITHUB_REPOSITORY.Trim()
+          gh variable set $env:GITHUB_VARIABLE_NAME --body $env:NEW_SHA_TO_SAVE --repo $repoName
+        shell: pwsh
