@@ -201,5 +201,6 @@ jobs:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
+          repo_name=$(echo "${{ github.repository }}" | tr -d '\r')
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "$repo_name"
         shell: bash
