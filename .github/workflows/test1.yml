@@ -1,3 +1,21 @@
+      # 17. Update the GitHub variable with the new SHA only after a successful build
+      - name: Update GitHub Variable on Success
+        if: success() && steps.check_build_condition.outputs.needs_build == 'true'
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          # Use PowerShell's Trim() method to reliably remove any leading/trailing whitespace,
+          # including carriage returns ('\r') and newlines ('\n').
+          $repoName = "${{ github.repository }}".Trim()
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${{ env.NEW_SHA_TO_SAVE }}" --repo $repoName
+        shell: pwsh```
+
+This is the most reliable fix and should resolve the `invalid control character in URL` error for good.
+
+Here is the complete workflow with this final correction.
+
+```yaml
 name: Build Corretto 21 (lilliput-2) for Windows (Optimized)
 
 on:
@@ -10,7 +28,7 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  # Added 'ccache' for build caching. We will enable it via the PATH method below.
+  # Added 'ccache' for build caching. It is enabled via the PATH method below.
   CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake,ccache
 
 jobs:
@@ -21,7 +39,7 @@ jobs:
       actions: write # Required to set repository variables
 
     steps:
-      # 1. Read the Last Built Upstream SHA from GitHub Repository Variable
+      # 1. Read the Last Built Upstream SHA
       - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
@@ -30,7 +48,7 @@ jobs:
           Write-Host "Last built upstream SHA read from variable: '$sha_from_var'"
         shell: pwsh
 
-      # 2. Checkout the upstream repository (shallow clone)
+      # 2. Checkout the upstream repository
       - name: Checkout upstream repository
         id: checkout_upstream
         uses: actions/checkout@v4
@@ -40,7 +58,7 @@ jobs:
           fetch-depth: 1
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
-      # 3. Get current upstream SHA from the checked-out repository
+      # 3. Get current upstream SHA
       - name: Get Current Upstream SHA
         id: get_upstream_sha
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -128,7 +146,7 @@ jobs:
         run: echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # 11. CORRECTED: Enable ccache by prepending its directory to the PATH
+      # 11. Enable ccache by prepending its directory to the PATH
       - name: Enable ccache by prepending to PATH
         if: steps.check_build_condition.outputs.needs_build == 'true'
         run: echo "C:\cygwin64\lib\ccache\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -147,7 +165,7 @@ jobs:
           C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
         shell: pwsh
 
-      # 13. Build Corretto (make images) using parallel execution
+      # 13. Build Corretto (make images)
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -201,6 +219,8 @@ jobs:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          repo_name=$(echo "${{ github.repository }}" | tr -d '\r')
-          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "$repo_name"
-        shell: bash
+          # CORRECTED: Use PowerShell's Trim() method to reliably remove any leading/trailing whitespace,
+          # including carriage returns ('\r') and newlines ('\n'), which prevents URL parsing errors.
+          $repoName = "${{ github.repository }}".Trim()
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${{ env.NEW_SHA_TO_SAVE }}" --repo $repoName
+        shell: pwsh```
