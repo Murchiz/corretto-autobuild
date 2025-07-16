@@ -85,10 +85,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\cygwin64\home\runneradmin\.ccache
-          # CORRECTED KEY: Tie cache to the upstream SHA, not the workflow's SHA.
           key: ${{ runner.os }}-ccache-${{ env.UPSTREAM_BRANCH }}-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
-            # CORRECTED RESTORE KEY: Restore from the most recent cache for the upstream branch.
             ${{ runner.os }}-ccache-${{ env.UPSTREAM_BRANCH }}-
 
       # 7. Cache the Corretto build output directory
@@ -97,10 +95,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CORRETTO_SOURCE_DIR }}/build
-          # CORRECTED KEY: Tie cache to the upstream SHA.
           key: ${{ runner.os }}-corretto-build-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
-            # CORRECTED RESTORE KEY: Restore from the most recent cache for the upstream branch.
             ${{ runner.os }}-corretto-build-${{ env.UPSTREAM_BRANCH }}-
 
       # 8. Cache the Cygwin installation itself
@@ -110,7 +106,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\cygwin64
-          key: ${{ runner.os }}-cygwin-${{ hashFiles(github.workflow) }}
+          # CORRECTED KEY: Replaced commas with hyphens to create a valid and stable key.
+          key: ${{ runner.os }}-cygwin-${{ replace(env.CYGWIN_PACKAGES, ',', '-') }}
+          restore-keys: |
+            ${{ runner.os }}-cygwin-
 
       # --- Build Environment Setup ---
       # (The rest of the file is unchanged)
