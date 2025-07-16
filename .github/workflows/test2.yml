@@ -121,7 +121,7 @@ jobs:
       - name: Cache Corretto Build Artifacts
         if: steps.check_new_commits.outputs.needs_build == 'true'
         id: cache-corretto-build
-        uses: actions/cache@4 # v4.0.2
+        uses: actions/cache@v4 # v4.0.2
         with:
           path: ${{ env.CORRETTO_SOURCE_DIR }}/build
           # Cache key based on the exact commit SHA being built
@@ -207,7 +207,7 @@ jobs:
       - name: Upload Windows JDK Build Artifact
         if: steps.check_new_commits.outputs.needs_build == 'true'
         # OPTIMIZATION: Pin action version
-        uses: actions/upload-artifact@4 # v4.3.3
+        uses: actions/upload-artifact@v4 # v4.3.3
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
