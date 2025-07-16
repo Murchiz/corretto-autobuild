@@ -99,7 +99,7 @@ jobs:
 
       # 8. Install Cygwin with necessary packages (only if not already cached)
       - name: Install missing Cygwin packages
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+        if: steps.check_build_condition.outputs.needs_build == 'true' && steps.cache-cygwin.outputs.cache-hit != 'true'
         run: |
           C:\cygwin64\cygwinsetup.exe -q -P ${{ env.CYGWIN_PACKAGES }}
         shell: cmd
