@@ -10,8 +10,8 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake,ccache
-  CCACHE_DIR_PATH: ${{ github.workspace }}\.ccache
+  # CORRECTED: Removed ccache, as it's the wrong tool. Cygwin is still needed for make, etc.
+  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake
 
 jobs:
   build_if_new_commits:
@@ -21,14 +21,13 @@ jobs:
       actions: write
 
     steps:
-      # Steps 1-5 remain the same
+      # Steps 1-4 remain the same
       - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
         shell: pwsh
-
       - name: Checkout upstream repository
         id: checkout_upstream
         uses: actions/checkout@v4
@@ -37,7 +36,6 @@ jobs:
           ref: ${{ env.UPSTREAM_BRANCH }}
           fetch-depth: 1
           path: ${{ env.CORRETTO_SOURCE_DIR }}
-
       - name: Get Current Upstream SHA
         id: get_upstream_sha
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -45,7 +43,6 @@ jobs:
           $current_sha = (git rev-parse HEAD).Trim()
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
         shell: pwsh
-
       - name: Determine if Build is Needed
         id: check_build_condition
         run: |
@@ -58,6 +55,7 @@ jobs:
           echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
+      # 5. Set up Corretto 21 as Bootstrap JDK
       - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
@@ -66,21 +64,32 @@ jobs:
           java-version: '21'
           architecture: x64
 
-      # Steps 6-12 (Caching and PATH setup) remain the same
-      - name: Create ccache directory
+      # --- Caching and Tooling Setup ---
+
+      # 6. CORRECTED: Install sccache, the correct caching tool for the MSVC compiler
+      - name: Install sccache
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: New-Item -ItemType Directory -Force -Path "${{ env.CCACHE_DIR_PATH }}"
+        run: choco install sccache -y
+        shell: pwsh
+      
+      # 7. CORRECTED: Add sccache to the front of the PATH
+      - name: Add sccache to PATH
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        run: echo "C:\Program Files\Mozilla sccache" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      - name: Cache ccache directory
+      # 8. CORRECTED: Cache the sccache data directory
+      - name: Cache sccache directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
         with:
-          path: ${{ env.CCACHE_DIR_PATH }}
-          key: ${{ runner.os }}-ccache-${{ env.UPSTREAM_BRANCH }}-${{ steps.get_upstream_sha.outputs.sha }}
+          # This is the default sccache directory on Windows
+          path: C:\Users\runneradmin\AppData\Local\Mozilla\sccache
+          key: ${{ runner.os }}-sccache-${{ env.UPSTREAM_BRANCH }}-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
-            ${{ runner.os }}-ccache-${{ env.UPSTREAM_BRANCH }}-
+            ${{ runner.os }}-sccache-${{ env.UPSTREAM_BRANCH }}-
 
+      # 9. Cache the Corretto build output directory
       - name: Cache Corretto build directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
@@ -90,6 +99,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-corretto-build-${{ env.UPSTREAM_BRANCH }}-
 
+      # 10. Cache and install Cygwin (no longer includes ccache)
       - name: Cache Cygwin installation
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: cache-cygwin
@@ -97,7 +107,6 @@ jobs:
         with:
           path: C:\cygwin64
           key: ${{ runner.os }}-cygwin-${{ hashFiles(github.workflow) }}
-
       - name: Install Cygwin with packages (if not cached)
         if: steps.check_build_condition.outputs.needs_build == 'true' && steps.cache-cygwin.outputs.cache-hit != 'true'
         run: |
@@ -106,39 +115,33 @@ jobs:
           $cygwinMirror = "https://mirrors.kernel.org/sourceware/cygwin/"
           Start-Process -FilePath $cygwinSetupPath -ArgumentList "-q -s $cygwinMirror -P ${{ env.CYGWIN_PACKAGES }}" -Wait -NoNewWindow
         shell: pwsh
-
       - name: Add Cygwin to PATH
         if: steps.check_build_condition.outputs.needs_build == 'true'
         run: echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      - name: Enable ccache by prepending to PATH
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: echo "C:\cygwin64\lib\ccache\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        shell: pwsh
-      
-      # 13. Configure Corretto Build
+      # --- Build and Package Steps ---
+
+      # 11. Configure Corretto Build
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $BOOT_JDK_CYGWIN = (& cygpath --unix $env:JAVA_HOME).Trim()
-          $CCACHE_DIR_CYGWIN = (& cygpath --unix "${{ env.CCACHE_DIR_PATH }}").Trim()
-          Write-Host "Forcing GCC toolchain and using CCACHE_DIR (Cygwin path): $CCACHE_DIR_CYGWIN"
-          # CORRECTED: Export CC and CXX to force the use of the GCC compiler from Cygwin, which ccache can wrap.
-          C:\cygwin64\bin\bash -c "export CCACHE_DIR='$CCACHE_DIR_CYGWIN' && export CC=gcc && export CXX=g++ && ./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
+          # CORRECTED: Force the build to use "sccache cl.exe" as the compiler.
+          # This satisfies the "MSVC is required" check and enables caching.
+          C:\cygwin64\bin\bash -c "export CC='sccache cl.exe' && export CXX='sccache cl.exe' && ./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
         shell: pwsh
 
-      # 14. Build Corretto (make images)
+      # 12. Build Corretto (make images)
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $CCACHE_DIR_CYGWIN = (& cygpath --unix "${{ env.CCACHE_DIR_PATH }}").Trim()
-          C:\cygwin64\bin\bash -c "export CCACHE_DIR='$CCACHE_DIR_CYGWIN' && make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
+          C:\cygwin64\bin\bash -c "make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
         shell: pwsh
 
-      # Steps 15-18 remain the same
+      # The rest of the workflow (steps 13-17) remains unchanged
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -148,7 +151,6 @@ jobs:
             Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
           }
         shell: pwsh
-
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
@@ -166,14 +168,12 @@ jobs:
           New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
         shell: pwsh
-
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
-
       - name: Update GitHub Variable on Success
         if: success() && steps.check_build_condition.outputs.needs_build == 'true'
         env:
