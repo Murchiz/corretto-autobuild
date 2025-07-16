@@ -2,15 +2,14 @@ name: Build Corretto 21 (lilliput-2) for Windows (Optimized)
 
 on:
   schedule:
-    - cron: '0 5 * * 1' # Runs every Monday at 5 AM UTC
-  workflow_dispatch: # Allows manual runs
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
 
 env:
   UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  # Added 'ccache' for build caching. It is enabled via the PATH method below.
   CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake,ccache
 
 jobs:
@@ -18,7 +17,7 @@ jobs:
     runs-on: windows-2025
     permissions:
       contents: read
-      actions: write # Required to set repository variables
+      actions: write
 
     steps:
       # 1. Read the Last Built Upstream SHA
@@ -86,9 +85,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\cygwin64\home\runneradmin\.ccache
-          key: ${{ runner.os }}-ccache-${{ github.ref }}-${{ github.sha }}
+          # CORRECTED KEY: Tie cache to the upstream SHA, not the workflow's SHA.
+          key: ${{ runner.os }}-ccache-${{ env.UPSTREAM_BRANCH }}-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
-            ${{ runner.os }}-ccache-${{ github.ref }}-
+            # CORRECTED RESTORE KEY: Restore from the most recent cache for the upstream branch.
+            ${{ runner.os }}-ccache-${{ env.UPSTREAM_BRANCH }}-
 
       # 7. Cache the Corretto build output directory
       - name: Cache Corretto build directory
@@ -96,9 +97,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CORRETTO_SOURCE_DIR }}/build
-          key: ${{ runner.os }}-corretto-build-${{ github.sha }}
+          # CORRECTED KEY: Tie cache to the upstream SHA.
+          key: ${{ runner.os }}-corretto-build-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
-            ${{ runner.os }}-corretto-build-${{ github.ref }}-
+            # CORRECTED RESTORE KEY: Restore from the most recent cache for the upstream branch.
+            ${{ runner.os }}-corretto-build-${{ env.UPSTREAM_BRANCH }}-
 
       # 8. Cache the Cygwin installation itself
       - name: Cache Cygwin installation
@@ -110,6 +113,7 @@ jobs:
           key: ${{ runner.os }}-cygwin-${{ hashFiles(github.workflow) }}
 
       # --- Build Environment Setup ---
+      # (The rest of the file is unchanged)
 
       # 9. Install Cygwin with packages (if not cached)
       - name: Install Cygwin with packages (if not cached)
@@ -133,8 +137,6 @@ jobs:
         if: steps.check_build_condition.outputs.needs_build == 'true'
         run: echo "C:\cygwin64\lib\ccache\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
-
-      # --- Build and Package Steps ---
 
       # 12. Configure Corretto Build
       - name: Configure Corretto Build
@@ -201,8 +203,6 @@ jobs:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # CORRECTED: Using PowerShell for this step to avoid shell-mixing issues with line endings.
-          # The .Trim() method correctly handles any trailing whitespace/newlines from the environment variable.
           $repoName = $env:GITHUB_REPOSITORY.Trim()
           gh variable set $env:GITHUB_VARIABLE_NAME --body $env:NEW_SHA_TO_SAVE --repo $repoName
         shell: pwsh
