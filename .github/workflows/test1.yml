@@ -11,6 +11,8 @@ env:
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
   CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake
+  # CORRECTED: Define the custom, space-free installation path for sccache
+  SCCACHE_INSTALL_PATH: C:\tools\sccache
 
 jobs:
   build_if_new_commits:
@@ -20,7 +22,7 @@ jobs:
       actions: write
 
     steps:
-      # Steps 1-4 remain the same
+      # Steps 1-5 remain the same
       - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
@@ -53,8 +55,6 @@ jobs:
           }
           echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
         shell: pwsh
-
-      # 5. Set up Corretto 21 as Bootstrap JDK
       - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
@@ -65,19 +65,19 @@ jobs:
 
       # --- Caching and Tooling Setup ---
 
-      # 6. Install sccache
-      - name: Install sccache
+      # 6. Install sccache to a custom directory without spaces
+      - name: Install sccache to space-free path
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: choco install sccache -y
+        run: choco install sccache -y --install-directory="'${{ env.SCCACHE_INSTALL_PATH }}'"
         shell: pwsh
       
-      # 7. Add sccache to PATH
+      # 7. Add the custom sccache path to GITHUB_PATH
       - name: Add sccache to PATH
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: echo "C:\Program Files\Mozilla sccache" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        run: echo "${{ env.SCCACHE_INSTALL_PATH }}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # 8. Cache the sccache data directory
+      # 8. Cache the sccache data directory (path does not change)
       - name: Cache sccache directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
@@ -126,7 +126,6 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $BOOT_JDK_CYGWIN = (& cygpath --unix $env:JAVA_HOME).Trim()
-          # CORRECTED: No longer setting CC or CXX. The configure script will find sccache's cl.exe shim via the PATH.
           C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
         shell: pwsh
 
@@ -138,13 +137,13 @@ jobs:
           C:\cygwin64\bin\bash -c "make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
         shell: pwsh
 
-      # 13. NEW: Show sccache statistics to verify it was used
+      # 13. Show sccache statistics to verify it was used
       - name: Show sccache statistics
         if: always() && steps.check_build_condition.outputs.needs_build == 'true'
         run: sccache --show-stats
         shell: pwsh
 
-      # The rest of the workflow (steps 14-18) remains the same
+      # The rest of the workflow (steps 14-18) remains unchanged
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
