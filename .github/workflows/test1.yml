@@ -106,10 +106,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\cygwin64
-          # CORRECTED KEY: Replaced commas with hyphens to create a valid and stable key.
-          key: ${{ runner.os }}-cygwin-${{ replace(env.CYGWIN_PACKAGES, ',', '-') }}
-          restore-keys: |
-            ${{ runner.os }}-cygwin-
+          # CORRECTED KEY: Using hashFiles on the workflow file is the robust, valid way to create a key
+          # that changes when the CYGWIN_PACKAGES list changes.
+          key: ${{ runner.os }}-cygwin-${{ hashFiles(github.workflow) }}
 
       # --- Build Environment Setup ---
       # (The rest of the file is unchanged)
