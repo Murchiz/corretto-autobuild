@@ -1,224 +1,134 @@
-name: Test 1 - Optimized with sccache
+name: tests lmarena
 
 on:
   schedule:
-    - cron: '0 5 * * 1'
+    - cron: '0 5 * * 1'  # 8:00 Moscow time (UTC+3)
   workflow_dispatch:
 
 env:
   UPSTREAM_REPO: corretto/corretto-21
   UPSTREAM_BRANCH: lilliput-2
-  GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
-  CORRETTO_SOURCE_DIR: corretto_source_checkout
-  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake
+  VAR_NAME: LAST_BUILT_SHA
+  CORRETTO_DIR: corretto-source
+  MSYS2_PACKAGES: make coreutils diffutils binutils zip unzip autoconf automake
 
 jobs:
-  build_if_new_commits:
-    runs-on: windows-2025
-    permissions:
-      contents: read
-      actions: read
+  check-sha:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_build: ${{ steps.check.outputs.needs_build }}
+      current_sha: ${{ steps.get-sha.outputs.current_sha }}
     steps:
-      # 1. Read the Last Built Upstream SHA from GitHub Repository Variable
-      - name: Read Last Built Upstream SHA from GitHub Variable
-        id: read_last_sha
+      - name: Get last built SHA
+        id: get-var
         run: |
-          $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
-          echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
-          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
-        shell: pwsh
-
-      # 2. Checkout the upstream repository in one step (shallow clone)
-      - name: Checkout upstream repository
-        id: checkout_upstream
+          echo "last_sha=$(gh variable get $VAR_NAME --repo $GITHUB_REPOSITORY 2>/dev/null || echo '')" >> $GITHUB_OUTPUT
+        
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
           fetch-depth: 1
-          path: ${{ env.CORRETTO_SOURCE_DIR }}
-
-      # 3. Get current upstream SHA from the checked-out repository
-      - name: Get Current Upstream SHA
-        id: get_upstream_sha
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+          path: ${{ env.CORRETTO_DIR }}
+        
+      - name: Get current SHA
+        id: get-sha
         run: |
-          $current_sha = (git rev-parse HEAD).Trim()
-          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
-          echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
-        shell: pwsh
-
-      # 4. Determine if build is needed
-      - name: Determine if Build is Needed
-        id: check_build_condition
+          current_sha=$(cd $CORRETTO_DIR && git rev-parse HEAD)
+          echo "current_sha=$current_sha" >> $GITHUB_OUTPUT
+        
+      - name: Check build condition
+        id: check
         run: |
-          $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
-          $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
-          $needs_build_ps_var = "false"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $needs_build_ps_var = "true"
-            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
-          } elseif ($last_sha -ne $current_sha) {
-            $needs_build_ps_var = "true"
-            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
-          } else {
-            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
-          }
-          echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
-        shell: pwsh
+          last_sha="${{ steps.get-var.outputs.last_sha }}"
+          current_sha="${{ steps.get-sha.outputs.current_sha }}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+          elif [[ -z "$last_sha" || "$last_sha" != "$current_sha" ]]; then
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+          fi
 
-      # 5. Update GitHub Repository Variable with the new SHA (only if build is needed)
-      - name: Update GitHub Repository Variable with PAT
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+  build:
+    needs: check-sha
+    if: ${{ needs.check-sha.outputs.needs_build == 'true' }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Update LAST_BUILT_SHA
+        run: |
+          gh variable set $VAR_NAME --body ${{ needs.check-sha.outputs.current_sha }} --repo $GITHUB_REPOSITORY
         env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }}
-          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
-        run: |
-          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
-        shell: bash
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # SCCACHE INTEGRATION START
-      - name: Run sccache-cache
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        uses: mozilla-actions/sccache-action@v0.0.9 # Use the latest version
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+          path: ${{ env.CORRETTO_DIR }}
+          fetch-depth: 1
 
-      - name: Configure sccache environment
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          # sccache-action automatically adds sccache to PATH. We need to ensure it's before gcc/g++
-          # This is typically handled by the action itself, but explicitly adding to GITHUB_PATH ensures precedence.
-          echo "C:\Users\runneradmin\AppData\Local\sccache" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        shell: pwsh
-      # SCCACHE INTEGRATION END
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            base-devel
+            make
+            coreutils
+            diffutils
+            binutils
+            zip
+            unzip
+            autoconf
+            automake
+          cache-key: msys2-${{ hashFiles('.msys2_packages') }}
 
-      # 6. Set up Corretto 21 as Bootstrap JDK
-      - name: Set up Corretto 21 as Bootstrap JDK
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
           java-version: '21'
           architecture: x64
-          # Adding dependency caching for Java, if Corretto build uses Maven/Gradle
-          # cache: 'maven' # Uncomment if applicable
-        id: setup_jdk
 
-      # 7. Cache Cygwin installation (note: consider additional caches for build artifacts if beneficial)
-      # Optimized cache key to be more robust for package changes
-      - name: Cache Cygwin installation
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        id: cache-cygwin
-        uses: actions/cache@v4
-        with:
-          path: C:\cygwin64
-          key: ${{ runner.os }}-cygwin-packages-${{ hashFiles(format('{0}', env.CYGWIN_PACKAGES)) }}
-          restore-keys: |
-            ${{ runner.os }}-cygwin-packages-
-
-      # 8. Install Cygwin with necessary packages (only if not already cached)
-      - name: Install missing Cygwin packages
-        if: steps.check_build_condition.outputs.needs_build == 'true' && steps.cache-cygwin.outputs.cache-hit != 'true'
+      - name: Configure build
+        shell: msys2 {0}
+        working-directory: ${{ env.CORRETTO_DIR }}
         run: |
-          C:\cygwin64\cygwinsetup.exe -q -P ${{ env.CYGWIN_PACKAGES }}
-        shell: cmd
+          boot_jdk=$(cygpath -u "$JAVA_HOME")
+          ./configure --with-boot-jdk="$boot_jdk" \
+            --disable-warnings-as-errors \
+            --with-debug-level=release
 
-      # 9. Add Cygwin to PATH
-      - name: Add Cygwin to PATH
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: echo "C:\cygwin64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build JDK
+        shell: msys2 {0}
+        working-directory: ${{ env.CORRETTO_DIR }}
+        run: |
+          make -j$(nproc) images
+
+      - name: Clean debug symbols
         shell: pwsh
-
-      # 10. Configure Corretto Build using the bootstrap JDK
-      - name: Configure Corretto Build
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $BOOT_JDK_WINDOWS = $env:JAVA_HOME
-          if (-not $BOOT_JDK_WINDOWS) { 
-            Write-Error "Bootstrap JDK path from JAVA_HOME is empty!"; 
-            exit 1 
-          }
-          # Convert Windows path to Cygwin style
-          $BOOT_JDK_CYGWIN = (& cygpath --unix $BOOT_JDK_WINDOWS).Trim()
-          Write-Host "Using Bootstrap JDK (Cygwin path): $BOOT_JDK_CYGWIN"
-          # Remove explicit CC/CXX. sccache should wrap gcc/g++ automatically if it's in PATH.
-          C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='${BOOT_JDK_CYGWIN}' --disable-warnings-as-errors --with-debug-level=release"
+          $jdkPath = Get-ChildItem ".\corretto-source\build\*\images\jdk" -Directory | Select-Object -First 1
+          Get-ChildItem -Path $jdkPath.FullName -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force
+
+      - name: Prepare artifact
         shell: pwsh
-
-      # 11. Build Corretto using parallel execution (using all available processors)
-      - name: Build Corretto (make images)
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          # sccache should automatically wrap the compilers if it's in PATH
-          C:\cygwin64\bin\bash -c "make JOBS=$NUMBER_OF_PROCESSORS images"
-        shell: pwsh
+          $jdkPath = Get-ChildItem ".\corretto-source\build\*\images\jdk" -Directory | Select-Object -First 1
+          $version = (Get-Content "$jdkPath\release" | Slosh -Pattern 'JAVA_VERSION="(?<version>.)"').version
+          $artifactPath = Join-Path $env:GITHUB_WORKSPACE "corretto-21-lilliput-$version-windows"
+          New-Item -ItemType Directory -Path $artifactPath
+          Move-Item -Path "$jdkPath\*" -Destination $artifactPath
 
-      # SCCACHE STATS START
-      - name: Show sccache stats
-        if: always()
-        run: |
-          sccache --show-stats
-        shell: pwsh
-      # SCCACHE STATS END
-
-      # 12. Clean Debug Symbols from JDK Image
-      - name: Clean Debug Symbols from JDK Image
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
-          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) {
-            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
-            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Warning "Could not find JDK image directory to clean."
-          }
-        shell: pwsh
-
-      # 13. Prepare Artifact Structure (extract version info and repackage the build)
-      - name: Prepare Artifact Structure
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        id: prepare_artifact
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
-          $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) { 
-            Write-Error "Could not find source JDK image directory"; 
-            exit 1 
-          }
-          $releaseFile = Join-Path $jdkSourcePath "release"
-          if (-not (Test-Path $releaseFile)) { 
-            Write-Error "Could not find release file at $releaseFile"; 
-            exit 1 
-          }
-          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
-          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
-          if (-not $javaVersion) { 
-            Write-Error "Could not parse JAVA_VERSION from release file"; 
-            exit 1 
-          }
-          Write-Host "Extracted JAVA_VERSION: $javaVersion"
-          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
-          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
-          $targetDirName = "corretto-21-lilliput-${javaVersion}"
-          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
-          if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
-          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
-          Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
-        shell: pwsh
-
-      - name: Create zip
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        run: |
-          Compress-Archive -Path staging_artifact\* \
-                           -DestinationPath corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk.zip
-
-      - name: Upload artefact
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
-          path: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk.zip
+          name: corretto-21-lilliput-windows-${{ github.run_id }}
+          path: corretto-21-lilliput-*-windows/
+          retention-days: 7
