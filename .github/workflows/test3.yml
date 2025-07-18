@@ -1,0 +1,120 @@
+name: Build Corretto 21 Lilliput Windows
+
+on:
+  schedule:
+    # 8:00 Moscow time (UTC+3) = 5:00 UTC
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+env:
+  LAST_BUILT_SHA: CORRETTO_LILLIPUT_LAST_SHA
+  BRANCH: lilliput-2
+  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake
+
+jobs:
+  check-sha:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_build: ${{ steps.check.outputs.needs_build }}
+      current_sha: ${{ steps.get-sha.outputs.sha }}
+    steps:
+      - name: Get current SHA
+        id: get-sha
+        run: |
+          SHA=$(curl -s "https://api.github.com/repos/corretto/corretto-21/commits/${{ env.BRANCH }}" | jq -r .sha)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Check if build needed
+        id: check
+        run: |
+          LAST_SHA="${{ vars[env.LAST_BUILT_SHA] }}"
+          CURRENT_SHA="${{ steps.get-sha.outputs.sha }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$LAST_SHA" != "$CURRENT_SHA" ]; then
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: check-sha
+    if: needs.check-sha.outputs.needs_build == 'true'
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: corretto/corretto-21
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 1
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21'
+          architecture: x64
+
+      - name: Cache Cygwin packages
+        uses: actions/cache@v4
+        id: cache-cygwin
+        with:
+          path: C:\cygwin64
+          key: cygwin-${{ runner.os }}-${{ hashFiles('**/CYGWIN_PACKAGES') }}
+
+      - name: Install Cygwin packages
+        if: steps.cache-cygwin.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Start-Process -Wait -NoNewWindow `
+            -FilePath "C:\cygwin64\setup-x86_64.exe" `
+            -ArgumentList "-qnNd -R C:\cygwin64 -s http://mirrors.kernel.org/sourceware/cygwin/ -P ${{ env.CYGWIN_PACKAGES }}"
+
+      - name: Configure build
+        shell: bash
+        run: |
+          export PATH="/cygdrive/c/cygwin64/bin:$PATH"
+          BOOT_JDK=$(cygpath "$JAVA_HOME")
+          ./configure \
+            --with-boot-jdk="$BOOT_JDK" \
+            --disable-warnings-as-errors \
+            --with-debug-level=release \
+            --with-native-debug-symbols=none
+
+      - name: Build
+        shell: bash
+        run: |
+          export PATH="/cygdrive/c/cygwin64/bin:$PATH"
+          make JOBS=$(nproc) images
+
+      - name: Clean debug files
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "build\*\images\jdk" -Recurse -Include "*.pdb","*.map" | Remove-Item -Force
+
+      - name: Package artifact
+        id: package
+        shell: pwsh
+        run: |
+          $version = Get-Content "build\*/images/jdk/release" | 
+            Select-String "JAVA_VERSION=" | 
+            ForEach-Object { ($_ -split '=')[1].Trim('"') }
+          
+          $artifactName = "corretto-21-lilliput-$version-windows-x64"
+          echo "name=$artifactName" >> $env:GITHUB_OUTPUT
+          
+          Compress-Archive `
+            -Path "build\*\images\jdk\*" `
+            -DestinationPath "$artifactName.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.zip
+
+      - name: Update last built SHA
+        run: |
+          gh variable set ${{ env.LAST_BUILT_SHA }} --body "${{ needs.check-sha.outputs.current_sha }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
