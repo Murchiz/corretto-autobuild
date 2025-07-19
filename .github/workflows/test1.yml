@@ -10,7 +10,6 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  # We will force the use of Gradle 8.5, which is compatible with Java 21
   NEW_GRADLE_VERSION: '8.5'
 
 jobs:
@@ -67,7 +66,7 @@ jobs:
           gh variable set "$TARGET_VARIABLE_NAME" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"
         shell: bash
 
-      # 6. Set up a single JDK: Corretto 21.
+      # 6. Set up the single JDK for both Gradle and the build
       - name: Set up Corretto JDK 21
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: setup_jdk
@@ -77,32 +76,38 @@ jobs:
           java-version: '21'
           architecture: x64
 
-      # 7. NEW: Update the Gradle Wrapper to a version compatible with JDK 21
+      # 7. Update the Gradle Wrapper to a version compatible with JDK 21
       - name: Update Gradle Wrapper to Version ${{ env.NEW_GRADLE_VERSION }}
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $wrapperPropertiesPath = ".\gradle\wrapper\gradle-wrapper.properties"
           $newDistributionUrl = "https\://services.gradle.org/distributions/gradle-${{ env.NEW_GRADLE_VERSION }}-bin.zip"
-          
-          Write-Host "Updating Gradle Wrapper distribution URL..."
           (Get-Content -Path $wrapperPropertiesPath -Raw) -replace "distributionUrl=.*", "distributionUrl=$newDistributionUrl" | Set-Content -Path $wrapperPropertiesPath
-          
-          Write-Host "Gradle Wrapper properties updated:"
-          Get-Content -Path $wrapperPropertiesPath
+          Write-Host "Gradle Wrapper properties updated."
         shell: pwsh
 
-      # 8. Build with the upgraded Gradle.
+      # 8. NEW: Fix the build script for the new Gradle version
+      - name: Fix Deprecated Gradle APIs in build.gradle
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          $buildGradlePath = ".\build.gradle"
+          Write-Host "Patching build.gradle for Gradle 8.5 compatibility..."
+          (Get-Content -Path $buildGradlePath -Raw) -replace 'archiveName ', 'archiveFileName ' | Set-Content -Path $buildGradlePath
+          Write-Host "build.gradle patched to use 'archiveFileName'."
+        shell: pwsh
+
+      # 9. Build with the upgraded Gradle and patched build script
       - name: Build Corretto JDK Image with Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: ./gradlew.bat images --no-daemon
         shell: pwsh
         env:
-          # The build scripts will use the JDK from the environment
           BOOT_JDK: ${{ steps.setup_jdk.outputs.path }}
 
-      # 9. Clean Debug Symbols from JDK Image
+      # Steps 10-12: No changes
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -116,7 +121,6 @@ jobs:
           }
         shell: pwsh
 
-      # 10. Prepare Artifact Structure
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
@@ -138,7 +142,6 @@ jobs:
           Copy-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Recurse -Force
         shell: pwsh
 
-      # 11. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
