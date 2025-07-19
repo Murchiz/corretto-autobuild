@@ -1,8 +1,8 @@
-name: Build Corretto 21 lilliput-2 for Windows (Optimized)
+name: Build Corretto 21 lilliput-2 for Windows (Gradle)
 
 on:
   schedule:
-    - cron: '0 5 * * 1'  # 8:00 MSK (UTC+3) = 5:00 UTC
+    - cron: '0 5 * * 1'
   workflow_dispatch:
 
 env:
@@ -10,115 +10,150 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  CYGWIN_PACKAGES: make,coreutils,diffutils,binutils,zip,unzip,autoconf,automake
-  BOOT_JDK_VERSION: 21
 
 jobs:
-  sha_check:
-    runs-on: ubuntu-latest
-    outputs:
-      needs_build: ${{ steps.check_build_condition.outputs.needs_build }}
-      current_sha: ${{ steps.get_upstream_sha.outputs.sha }}
+  build_if_new_commits:
+    runs-on: windows-latest
+    permissions:
+      contents: write # Needed for gh variable set
+      actions: read
     steps:
-      - name: Check SHA in Linux
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ env.UPSTREAM_BRANCH }}
-          fetch-depth: 1
-
-      - name: Get Current SHA
-        id: get_upstream_sha
-        run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Read Last SHA
+      # 1. Read the Last Built Upstream SHA from GitHub Repository Variable
+      - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
-          last_sha=$(gh variable get "${{ env.GITHUB_VARIABLE_NAME }}" --repo "${{ github.repository }}" 2>/dev/null || true)
-          echo "last_sha=$last_sha" >> $GITHUB_OUTPUT
+          $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
+          echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
+          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
+        shell: pwsh
 
-      - name: Check Build Condition
-        id: check_build_condition
-        run: |
-          needs_build="false"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            needs_build="true"
-          elif [ "${{ steps.read_last_sha.outputs.last_sha }}" != "${{ steps.get_upstream_sha.outputs.sha }}" ]; then
-            needs_build="true"
-          fi
-          echo "needs_build=$needs_build" >> $GITHUB_OUTPUT
-
-  build_windows:
-    needs: sha_check
-    if: needs.sha_check.outputs.needs_build == 'true'
-    runs-on: windows-2022
-    permissions:
-      contents: write  # Required to update GitHub variables
-    steps:
-      - name: Checkout Source
+      # 2. Checkout the upstream repository
+      - name: Checkout upstream repository
+        id: checkout_upstream
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
+          fetch-depth: 0 # Full history can be useful for versioning
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
-      - name: Setup Bootstrap JDK
+      # 3. Get current upstream SHA
+      - name: Get Current Upstream SHA
+        id: get_upstream_sha
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          $current_sha = (git rev-parse HEAD).Trim()
+          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
+          echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      # 4. Determine if build is needed
+      - name: Determine if Build is Needed
+        id: check_build_condition
+        run: |
+          $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
+          $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
+          $needs_build = "false"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $needs_build = "true"
+            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
+          } elseif ($last_sha -ne $current_sha) {
+            $needs_build = "true"
+            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
+          } else {
+            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
+          }
+          echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      # 5. Update GitHub Repository Variable with the new SHA
+      - name: Update GitHub Repository Variable with PAT
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+          TARGET_VARIABLE_NAME: ${{ env.GITHUB_VARIABLE_NAME }}
+        run: |
+          gh variable set "$TARGET_VARIABLE_NAME" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"
+        shell: bash
+
+      # 6. Set up Bootstrap JDK
+      - name: Set up Bootstrap JDK
+        if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
-          java-version: ${{ env.BOOT_JDK_VERSION }}
+          java-version: '21'
           architecture: x64
 
-      - name: Cache MSYS2
-        id: cache-msys2
-        uses: actions/cache@v4
-        with:
-          path: C:\msys64
-          key: msys2-${{ runner.os }}-${{ hashFiles('.github/msys2-packages.txt') }}
+      # 7. Build Corretto JDK Image with Gradle
+      - name: Build Corretto JDK Image with Gradle
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: ./gradlew.bat images
+        shell: pwsh
 
-      - name: Install MSYS2
-        if: steps.cache-msys2.outputs.cache-hit != 'true'
-        uses: msys2/setup-msys2@v2
-        with:
-          path-type: inherit
-          install: >-
-            base-devel
-            zip
-            unzip
-            autoconf
-            automake
-
-      - name: Configure Build
+      # 8. Clean Debug Symbols from JDK Image
+      - name: Clean Debug Symbols from JDK Image
+        if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $bootJdk = (Get-Item "C:\hostedtoolcache\windows\Java_Corretto-${{ env.BOOT_JDK_VERSION }}-x64\*").FullName
-          msys2_shell.cmd -c "export JAVA_HOME=$(cygpath -u $bootJdk) && ./configure --with-boot-jdk=$JAVA_HOME --disable-warnings-as-errors --with-debug-level=release"
+          # Search for the JDK image within the 'corretto-build' directory
+          $jdkImagePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($jdkImagePath) {
+            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
+            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
+          } else {
+            Write-Warning "Could not find JDK image directory to clean. The output path might have changed."
+          }
+        shell: pwsh
 
-      - name: Build with Parallel Jobs
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: msys2_shell.cmd -c "make JOBS=$env:NUMBER_OF_PROCESSORS images"
-
-      - name: Clean Debug Symbols
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
-          Get-ChildItem -Path "build\*\images\jdk" -Recurse -Include "*.pdb","*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
-
-      - name: Update SHA Variable
-        run: |
-          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${{ needs.sha_check.outputs.current_sha }}" --repo "${{ github.repository }}"
-
-      - name: Prepare Artifact
+      # 9. Prepare Artifact Structure
+      - name: Prepare Artifact Structure
+        if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $version = (Get-Content "build\*\images\jdk\release" | ConvertFrom-StringData).JAVA_VERSION.Trim('"')
-          $artifactName = "corretto-21-lilliput-${version}-windows-x64-jdk"
-          Compress-Archive -Path "build\*\images\jdk\*" -DestinationPath "$artifactName.zip" -CompressionLevel Optimal
-          echo "artifact_name=$artifactName.zip" >> $env:GITHUB_OUTPUT
+          # Find the JDK image path again
+          $jdkSourcePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $jdkSourcePath) { 
+            Write-Error "Could not find source JDK image directory in 'corretto-build'. Check the Gradle build output path." 
+            exit 1 
+          }
+          $releaseFile = Join-Path $jdkSourcePath "release"
+          if (-not (Test-Path $releaseFile)) { 
+            Write-Error "Could not find release file at $releaseFile"
+            exit 1 
+          }
+          # Use Get-Content to read the file and parse it
+          $releaseContent = Get-Content $releaseFile | ForEach-Object {
+            $parts = $_.Split('=', 2)
+            if ($parts.Length -eq 2) {
+              [pscustomobject]@{
+                Name = $parts[0]
+                Value = $parts[1].Trim('"')
+              }
+            }
+          } | Where-Object { $_.Name -eq 'JAVA_VERSION' }
+          $javaVersion = $releaseContent.Value
+          if (-not $javaVersion) { 
+            Write-Error "Could not parse JAVA_VERSION from release file"
+            exit 1 
+          }
+          Write-Host "Extracted JAVA_VERSION: $javaVersion"
+          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
+          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
+          $targetDirName = "corretto-21-lilliput-${javaVersion}"
+          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
+          if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
+          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
+          Copy-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Recurse -Force
+        shell: pwsh
 
-      - name: Upload Artifact
+      # 10. Upload Windows JDK Build Artifact
+      - name: Upload Windows JDK Build Artifact
+        if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.prepare_artifact.outputs.artifact_name }}
-          path: ${{ env.CORRETTO_SOURCE_DIR }}/*.zip
-          if-no-files-found: error
+          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
+          path: staging_artifact/
