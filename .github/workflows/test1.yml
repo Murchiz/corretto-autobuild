@@ -15,19 +15,17 @@ jobs:
   build_if_new_commits:
     runs-on: windows-latest
     permissions:
-      contents: write # Needed for gh variable set
+      contents: write
       actions: read
     steps:
-      # 1. Read the Last Built Upstream SHA from GitHub Repository Variable
+      # Steps 1-5: No changes, they are for checking commits and updating variables
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
-          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
         shell: pwsh
 
-      # 2. Checkout the upstream repository
       - name: Checkout upstream repository
         id: checkout_upstream
         uses: actions/checkout@v4
@@ -37,17 +35,14 @@ jobs:
           fetch-depth: 0
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
-      # 3. Get current upstream SHA
       - name: Get Current Upstream SHA
         id: get_upstream_sha
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
-          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
-      # 4. Determine if build is needed
       - name: Determine if Build is Needed
         id: check_build_condition
         run: |
@@ -56,17 +51,12 @@ jobs:
           $needs_build = "false"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $needs_build = "true"
-            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
           } elseif ($last_sha -ne $current_sha) {
             $needs_build = "true"
-            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
-          } else {
-            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
           }
           echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
-      # 5. Update GitHub Repository Variable with the new SHA
       - name: Update GitHub Repository Variable with PAT
         if: steps.check_build_condition.outputs.needs_build == 'true'
         env:
@@ -77,25 +67,36 @@ jobs:
           gh variable set "$TARGET_VARIABLE_NAME" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"
         shell: bash
 
-      # 6. Set up Bootstrap JDK
-      - name: Set up Bootstrap JDK
+      # 6. Set up JDK for Gradle (Java 17, compatible with Gradle 7.3.1)
+      - name: Set up JDK for Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        id: setup_bootstrap_jdk # Add an ID to this step
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
-          java-version: '21'
+          java-version: '17' # This JDK runs Gradle
           architecture: x64
 
-      # 7. Build Corretto JDK Image with Gradle
+      # 7. Set up Bootstrap JDK for OpenJDK (Corretto 21)
+      - name: Set up Bootstrap JDK for OpenJDK
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        id: setup_bootstrap_jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21' # This JDK compiles OpenJDK
+          architecture: x64
+
+      # 8. Build Corretto JDK Image with Gradle
       - name: Build Corretto JDK Image with Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        # Explicitly tell Gradle which JDK to use
-        run: ./gradlew.bat images --no-daemon -Dorg.gradle.java.home="${{ steps.setup_bootstrap_jdk.outputs.java-home }}"
+        run: ./gradlew.bat images --no-daemon
         shell: pwsh
+        env:
+          # Tell the OpenJDK build scripts where to find the bootstrap JDK
+          BOOT_JDK: ${{ steps.setup_bootstrap_jdk.outputs.path }}
 
-      # 8. Clean Debug Symbols from JDK Image
+      # Steps 9-11 (artifact handling) are unchanged
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -105,38 +106,22 @@ jobs:
             Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
             Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
           } else {
-            Write-Warning "Could not find JDK image directory to clean. The output path might have changed."
+            Write-Warning "Could not find JDK image directory to clean."
           }
         shell: pwsh
 
-      # 9. Prepare Artifact Structure
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $jdkSourcePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) { 
-            Write-Error "Could not find source JDK image directory in 'corretto-build'. Check the Gradle build output path." 
-            exit 1 
-          }
+          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory in 'corretto-build'."; exit 1 }
           $releaseFile = Join-Path $jdkSourcePath "release"
-          if (-not (Test-Path $releaseFile)) { 
-            Write-Error "Could not find release file at $releaseFile"
-            exit 1 
-          }
-          $releaseContent = Get-Content $releaseFile | ForEach-Object {
-            $parts = $_.Split('=', 2)
-            if ($parts.Length -eq 2) {
-              [pscustomobject]@{ Name = $parts[0]; Value = $parts[1].Trim('"') }
-            }
-          } | Where-Object { $_.Name -eq 'JAVA_VERSION' }
+          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file at $releaseFile"; exit 1 }
+          $releaseContent = Get-Content $releaseFile | ForEach-Object { $parts = $_.Split('=', 2); if ($parts.Length -eq 2) { [pscustomobject]@{ Name = $parts[0]; Value = $parts[1].Trim('"') } } } | Where-Object { $_.Name -eq 'JAVA_VERSION' }
           $javaVersion = $releaseContent.Value
-          if (-not $javaVersion) { 
-            Write-Error "Could not parse JAVA_VERSION from release file"
-            exit 1 
-          }
-          Write-Host "Extracted JAVA_VERSION: $javaVersion"
+          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION from release file"; exit 1 }
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
@@ -146,7 +131,6 @@ jobs:
           Copy-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Recurse -Force
         shell: pwsh
 
-      # 10. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
