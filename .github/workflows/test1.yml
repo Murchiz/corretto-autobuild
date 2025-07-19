@@ -66,7 +66,7 @@ jobs:
           gh variable set "$TARGET_VARIABLE_NAME" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"
         shell: bash
 
-      # 6. Set up the single JDK for both Gradle and the build
+      # 6. Set up the single JDK
       - name: Set up Corretto JDK 21
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: setup_jdk
@@ -76,7 +76,7 @@ jobs:
           java-version: '21'
           architecture: x64
 
-      # 7. Update the Gradle Wrapper to a version compatible with JDK 21
+      # 7. Update the Gradle Wrapper
       - name: Update Gradle Wrapper to Version ${{ env.NEW_GRADLE_VERSION }}
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -87,18 +87,19 @@ jobs:
           Write-Host "Gradle Wrapper properties updated."
         shell: pwsh
 
-      # 8. NEW: Fix the build script for the new Gradle version
+      # 8. CORRECTED: Fix the build script for Gradle 8.5
       - name: Fix Deprecated Gradle APIs in build.gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $buildGradlePath = ".\build.gradle"
           Write-Host "Patching build.gradle for Gradle 8.5 compatibility..."
-          (Get-Content -Path $buildGradlePath -Raw) -replace 'archiveName ', 'archiveFileName ' | Set-Content -Path $buildGradlePath
-          Write-Host "build.gradle patched to use 'archiveFileName'."
+          # Replace 'archiveName method' with 'archiveFileName.set(method)'
+          (Get-Content -Path $buildGradlePath -Raw) -replace 'archiveName (.*)', 'archiveFileName.set($1)' | Set-Content -Path $buildGradlePath
+          Write-Host "build.gradle patched to use 'archiveFileName.set()'."
         shell: pwsh
 
-      # 9. Build with the upgraded Gradle and patched build script
+      # 9. Build with the upgraded and patched tools
       - name: Build Corretto JDK Image with Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -114,7 +115,6 @@ jobs:
         run: |
           $jdkImagePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if ($jdkImagePath) {
-            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
             Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
           } else {
             Write-Warning "Could not find JDK image directory to clean."
@@ -127,12 +127,12 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $jdkSourcePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory in 'corretto-build'."; exit 1 }
+          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory."; exit 1 }
           $releaseFile = Join-Path $jdkSourcePath "release"
-          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file at $releaseFile"; exit 1 }
+          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file."; exit 1 }
           $releaseContent = Get-Content $releaseFile | ForEach-Object { $parts = $_.Split('=', 2); if ($parts.Length -eq 2) { [pscustomobject]@{ Name = $parts[0]; Value = $parts[1].Trim('"') } } } | Where-Object { $_.Name -eq 'JAVA_VERSION' }
           $javaVersion = $releaseContent.Value
-          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION from release file"; exit 1 }
+          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION."; exit 1 }
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
