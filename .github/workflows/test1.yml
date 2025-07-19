@@ -34,7 +34,7 @@ jobs:
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
-          fetch-depth: 0 # Full history can be useful for versioning
+          fetch-depth: 0
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
       # 3. Get current upstream SHA
@@ -80,6 +80,7 @@ jobs:
       # 6. Set up Bootstrap JDK
       - name: Set up Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
+        id: setup_bootstrap_jdk # Add an ID to this step
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
@@ -90,7 +91,8 @@ jobs:
       - name: Build Corretto JDK Image with Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: ./gradlew.bat images
+        # Explicitly tell Gradle which JDK to use
+        run: ./gradlew.bat images --no-daemon -Dorg.gradle.java.home="${{ steps.setup_bootstrap_jdk.outputs.java-home }}"
         shell: pwsh
 
       # 8. Clean Debug Symbols from JDK Image
@@ -98,7 +100,6 @@ jobs:
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          # Search for the JDK image within the 'corretto-build' directory
           $jdkImagePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if ($jdkImagePath) {
             Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
@@ -114,7 +115,6 @@ jobs:
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          # Find the JDK image path again
           $jdkSourcePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if (-not $jdkSourcePath) { 
             Write-Error "Could not find source JDK image directory in 'corretto-build'. Check the Gradle build output path." 
@@ -125,14 +125,10 @@ jobs:
             Write-Error "Could not find release file at $releaseFile"
             exit 1 
           }
-          # Use Get-Content to read the file and parse it
           $releaseContent = Get-Content $releaseFile | ForEach-Object {
             $parts = $_.Split('=', 2)
             if ($parts.Length -eq 2) {
-              [pscustomobject]@{
-                Name = $parts[0]
-                Value = $parts[1].Trim('"')
-              }
+              [pscustomobject]@{ Name = $parts[0]; Value = $parts[1].Trim('"') }
             }
           } | Where-Object { $_.Name -eq 'JAVA_VERSION' }
           $javaVersion = $releaseContent.Value
