@@ -10,21 +10,21 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  NEW_GRADLE_VERSION: '8.5'
 
 jobs:
   build_if_new_commits:
-    runs-on: windows-latest
+    runs-on: windows-2025
     permissions:
-      contents: write
+      contents: read
       actions: read
     steps:
-      # Steps 1-5: No changes
+      # Steps 1-5 remain the same as your original workflow
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
+          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
         shell: pwsh
 
       - name: Checkout upstream repository
@@ -33,7 +33,7 @@ jobs:
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
-          fetch-depth: 0
+          fetch-depth: 1
           path: ${{ env.CORRETTO_SOURCE_DIR }}
 
       - name: Get Current Upstream SHA
@@ -41,6 +41,7 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
+          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
@@ -49,11 +50,17 @@ jobs:
         run: |
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
-          $needs_build = "false"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch" -or $last_sha -ne $current_sha) {
-            $needs_build = "true"
+          $needs_build_ps_var = "false"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $needs_build_ps_var = "true"
+            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
+          } elseif ($last_sha -ne $current_sha) {
+            $needs_build_ps_var = "true"
+            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
+          } else {
+            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
           }
-          echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
+          echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
       - name: Update GitHub Repository Variable with PAT
@@ -61,89 +68,154 @@ jobs:
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
-          TARGET_VARIABLE_NAME: ${{ env.GITHUB_VARIABLE_NAME }}
+          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
         run: |
-          gh variable set "$TARGET_VARIABLE_NAME" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"
+          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
 
-      # 6. Set up the single JDK
-      - name: Set up Corretto JDK 21
+      # 6. Set up Corretto 21 as Bootstrap JDK
+      - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        id: setup_jdk
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
           java-version: '21'
           architecture: x64
+        id: setup_jdk
 
-      # 7. Update the Gradle Wrapper
-      - name: Update Gradle Wrapper to Version ${{ env.NEW_GRADLE_VERSION }}
+      # 7. Setup Visual Studio Environment
+      - name: Setup Visual Studio Environment
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
-          $wrapperPropertiesPath = ".\gradle\wrapper\gradle-wrapper.properties"
-          $newDistributionUrl = "https\://services.gradle.org/distributions/gradle-${{ env.NEW_GRADLE_VERSION }}-bin.zip"
-          (Get-Content -Path $wrapperPropertiesPath -Raw) -replace "distributionUrl=.*", "distributionUrl=$newDistributionUrl" | Set-Content -Path $wrapperPropertiesPath
-          Write-Host "Gradle Wrapper properties updated."
-        shell: pwsh
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-      # 8. CORRECTED: Patch build.gradle to fix multiple deprecated APIs
-      - name: Fix Deprecated Gradle APIs in build.gradle
+      # 8. Download and setup jtreg
+      - name: Download jtreg
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $buildGradlePath = ".\build.gradle"
-          Write-Host "Patching build.gradle for Gradle 8.5 compatibility..."
+          $jtregVersion = "7.4+1"
+          $jtregUrl = "https://ci.adoptium.net/view/Dependencies/job/dependency_pipeline/lastSuccessfulBuild/artifact/jtreg/jtreg-$jtregVersion.tar.gz"
+          $jtregDir = "$env:GITHUB_WORKSPACE\jtreg"
           
-          $content = Get-Content -Path $buildGradlePath -Raw
-          # Fix 1: Replace deprecated 'archiveName' with modern 'archiveFileName.set()'
-          $content = $content -replace 'archiveName (.*)', 'archiveFileName.set($1)'
-          # Fix 2: Comment out deprecated imperative plugin application
-          $content = $content -replace "apply plugin: 'base'", "// apply plugin: 'base'"
+          Write-Host "Downloading jtreg from $jtregUrl"
+          Invoke-WebRequest -Uri $jtregUrl -OutFile "jtreg.tar.gz"
           
-          Set-Content -Path $buildGradlePath -Value $content
-          Write-Host "build.gradle patched to fix 'archiveName' and 'apply plugin'."
+          # Extract using tar (available on Windows)
+          tar -xzf jtreg.tar.gz
+          Move-Item "jtreg" $jtregDir
+          
+          echo "JTREG_DIR=$jtregDir" >> $env:GITHUB_ENV
         shell: pwsh
 
-      # 9. Build with the upgraded and patched tools
-      - name: Build Corretto JDK Image with Gradle
+      # 9. Find Windows SDK and VC Runtime paths
+      - name: Find Windows SDK and VC Runtime paths
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: ./gradlew.bat images --no-daemon
+        run: |
+          # Find UCRT DLL directory (part of Windows SDK)
+          $windowsKitPath = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          $ucrtVersion = Get-ChildItem "$windowsKitPath\lib" | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object -Descending | Select-Object -First 1
+          $ucrtDllDir = "$windowsKitPath\Redist\$($ucrtVersion.Name)\ucrt\DLLs\x64"
+          
+          if (-not (Test-Path $ucrtDllDir)) {
+            # Alternative path
+            $ucrtDllDir = "$windowsKitPath\Redist\ucrt\DLLs\x64"
+          }
+          
+          Write-Host "UCRT DLL Directory: $ucrtDllDir"
+          echo "UCRT_DLL_DIR=$ucrtDllDir" >> $env:GITHUB_ENV
+          
+          # Find vcruntime140.dll
+          $vcRuntimeDir = "${env:ProgramFiles}\Microsoft Visual Studio\2025\Enterprise\VC\Redist\MSVC"
+          $vcVersion = Get-ChildItem $vcRuntimeDir | Sort-Object -Descending | Select-Object -First 1
+          $vcRuntimePath = "$vcRuntimeDir\$($vcVersion.Name)\x64\Microsoft.VC143.CRT"
+          
+          if (-not (Test-Path $vcRuntimePath)) {
+            # Try alternative paths
+            $vcRuntimePath = "${env:VCToolsRedistDir}\x64\Microsoft.VC143.CRT"
+          }
+          
+          Write-Host "VC Runtime Directory: $vcRuntimePath"
+          echo "VCRUNTIME_DIR=$vcRuntimePath" >> $env:GITHUB_ENV
         shell: pwsh
-        env:
-          BOOT_JDK: ${{ steps.setup_jdk.outputs.path }}
 
-      # Steps 10-12: No changes
-      - name: Clean Debug Symbols from JDK Image
+      # 10. Cache Gradle dependencies
+      - name: Cache Gradle dependencies
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 11. Build Corretto with Gradle
+      - name: Build Corretto with Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $jdkImagePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) { Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue }
+          Write-Host "Bootstrap JDK: $env:JAVA_HOME"
+          Write-Host "UCRT DLL Dir: $env:UCRT_DLL_DIR"
+          Write-Host "JTreg Dir: $env:JTREG_DIR"
+          Write-Host "VCRuntime Dir: $env:VCRUNTIME_DIR"
+          
+          .\gradlew.bat :installers:windows:zip:build `
+            -Pbootjdk_dir="$env:JAVA_HOME" `
+            -Pucrt_dll_dir="$env:UCRT_DLL_DIR" `
+            -Pjtreg_dir="$env:JTREG_DIR" `
+            -Pvcruntime_dir="$env:VCRUNTIME_DIR" `
+            --no-daemon `
+            --info
         shell: pwsh
 
-      - name: Prepare Artifact Structure
+      # 12. Extract and prepare the built JDK
+      - name: Extract and prepare JDK artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $jdkSourcePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory."; exit 1 }
-          $releaseFile = Join-Path $jdkSourcePath "release"
-          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file."; exit 1 }
-          $releaseContent = Get-Content $releaseFile | ForEach-Object { $parts = $_.Split('=', 2); if ($parts.Length -eq 2) { [pscustomobject]@{ Name = $parts[0]; Value = $parts[1].Trim('"') } } } | Where-Object { $_.Name -eq 'JAVA_VERSION' }
-          $javaVersion = $releaseContent.Value
-          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION."; exit 1 }
-          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
+          $zipPath = Get-ChildItem -Path "installers\windows\zip\corretto-build\distributions\*.zip" | Select-Object -First 1
+          if (-not $zipPath) {
+            Write-Error "Could not find built zip file"
+            exit 1
+          }
+          
+          Write-Host "Found built zip: $($zipPath.FullName)"
+          
+          # Extract the zip to get the JDK
+          $extractDir = "$env:GITHUB_WORKSPACE\extracted_jdk"
+          Expand-Archive -Path $zipPath.FullName -DestinationPath $extractDir -Force
+          
+          # Find the JDK directory (it should be the only directory in the extracted content)
+          $jdkDir = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
+          
+          # Read version from release file
+          $releaseFile = Join-Path $jdkDir.FullName "release"
+          if (-not (Test-Path $releaseFile)) {
+            Write-Error "Could not find release file"
+            exit 1
+          }
+          
+          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
+          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
+          Write-Host "Extracted JAVA_VERSION: $javaVersion"
+          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $env:GITHUB_OUTPUT
+          
+          # Prepare staging directory
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
-          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
+          $fullTargetPath = Join-Path $stagingDir $targetDirName
+          
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
-          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
-          Copy-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Recurse -Force
+          New-Item -ItemType Directory -Path $stagingDir | Out-Null
+          
+          # Move the JDK to staging with the proper name
+          Move-Item -Path $jdkDir.FullName -Destination $fullTargetPath -Force
         shell: pwsh
 
+      # 13. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
