@@ -87,16 +87,22 @@ jobs:
           Write-Host "Gradle Wrapper properties updated."
         shell: pwsh
 
-      # 8. CORRECTED: Fix the build script for Gradle 8.5
+      # 8. CORRECTED: Patch build.gradle to fix multiple deprecated APIs
       - name: Fix Deprecated Gradle APIs in build.gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $buildGradlePath = ".\build.gradle"
           Write-Host "Patching build.gradle for Gradle 8.5 compatibility..."
-          # Replace 'archiveName method' with 'archiveFileName.set(method)'
-          (Get-Content -Path $buildGradlePath -Raw) -replace 'archiveName (.*)', 'archiveFileName.set($1)' | Set-Content -Path $buildGradlePath
-          Write-Host "build.gradle patched to use 'archiveFileName.set()'."
+          
+          $content = Get-Content -Path $buildGradlePath -Raw
+          # Fix 1: Replace deprecated 'archiveName' with modern 'archiveFileName.set()'
+          $content = $content -replace 'archiveName (.*)', 'archiveFileName.set($1)'
+          # Fix 2: Comment out deprecated imperative plugin application
+          $content = $content -replace "apply plugin: 'base'", "// apply plugin: 'base'"
+          
+          Set-Content -Path $buildGradlePath -Value $content
+          Write-Host "build.gradle patched to fix 'archiveName' and 'apply plugin'."
         shell: pwsh
 
       # 9. Build with the upgraded and patched tools
@@ -114,11 +120,7 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $jdkImagePath = Get-ChildItem -Path "corretto-build\**\images\jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) {
-            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Warning "Could not find JDK image directory to clean."
-          }
+          if ($jdkImagePath) { Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue }
         shell: pwsh
 
       - name: Prepare Artifact Structure
