@@ -10,6 +10,8 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
+  # We will force the use of Gradle 8.5, which is compatible with Java 21
+  NEW_GRADLE_VERSION: '8.5'
 
 jobs:
   build_if_new_commits:
@@ -18,7 +20,7 @@ jobs:
       contents: write
       actions: read
     steps:
-      # Steps 1-5: No changes, they are for checking commits and updating variables
+      # Steps 1-5: No changes
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
@@ -49,9 +51,7 @@ jobs:
           $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
           $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
           $needs_build = "false"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $needs_build = "true"
-          } elseif ($last_sha -ne $current_sha) {
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -or $last_sha -ne $current_sha) {
             $needs_build = "true"
           }
           echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
@@ -67,36 +67,42 @@ jobs:
           gh variable set "$TARGET_VARIABLE_NAME" --body "$NEW_SHA_TO_SAVE" --repo "${{ github.repository }}"
         shell: bash
 
-      # 6. Set up JDK for Gradle (Java 17, compatible with Gradle 7.3.1)
-      - name: Set up JDK for Gradle
+      # 6. Set up a single JDK: Corretto 21.
+      - name: Set up Corretto JDK 21
         if: steps.check_build_condition.outputs.needs_build == 'true'
+        id: setup_jdk
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
-          java-version: '17' # This JDK runs Gradle
+          java-version: '21'
           architecture: x64
 
-      # 7. Set up Bootstrap JDK for OpenJDK (Corretto 21)
-      - name: Set up Bootstrap JDK for OpenJDK
+      # 7. NEW: Update the Gradle Wrapper to a version compatible with JDK 21
+      - name: Update Gradle Wrapper to Version ${{ env.NEW_GRADLE_VERSION }}
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        id: setup_bootstrap_jdk
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'corretto'
-          java-version: '21' # This JDK compiles OpenJDK
-          architecture: x64
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          $wrapperPropertiesPath = ".\gradle\wrapper\gradle-wrapper.properties"
+          $newDistributionUrl = "https\://services.gradle.org/distributions/gradle-${{ env.NEW_GRADLE_VERSION }}-bin.zip"
+          
+          Write-Host "Updating Gradle Wrapper distribution URL..."
+          (Get-Content -Path $wrapperPropertiesPath -Raw) -replace "distributionUrl=.*", "distributionUrl=$newDistributionUrl" | Set-Content -Path $wrapperPropertiesPath
+          
+          Write-Host "Gradle Wrapper properties updated:"
+          Get-Content -Path $wrapperPropertiesPath
+        shell: pwsh
 
-      # 8. Build Corretto JDK Image with Gradle
+      # 8. Build with the upgraded Gradle.
       - name: Build Corretto JDK Image with Gradle
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: ./gradlew.bat images --no-daemon
         shell: pwsh
         env:
-          # Tell the OpenJDK build scripts where to find the bootstrap JDK
-          BOOT_JDK: ${{ steps.setup_bootstrap_jdk.outputs.path }}
+          # The build scripts will use the JDK from the environment
+          BOOT_JDK: ${{ steps.setup_jdk.outputs.path }}
 
-      # Steps 9-11 (artifact handling) are unchanged
+      # 9. Clean Debug Symbols from JDK Image
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -110,6 +116,7 @@ jobs:
           }
         shell: pwsh
 
+      # 10. Prepare Artifact Structure
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
@@ -131,6 +138,7 @@ jobs:
           Copy-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Recurse -Force
         shell: pwsh
 
+      # 11. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
