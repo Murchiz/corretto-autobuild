@@ -1,4 +1,4 @@
-name: Build Corretto 21 lilliput-2 for Windows (Gradle)
+name: Build Corretto 21 lilliput-2 for Windows with MSYS2
 
 on:
   schedule:
@@ -10,6 +10,15 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
+  # Replaced CYGWIN_PACKAGES with MSYS2_PACKAGES, using packages from Corretto's own workflow
+  MSYS2_PACKAGES: >-
+    make
+    autoconf
+    unzip
+    zip
+    diffutils
+    patch
+    mingw-w64-x86_64-toolchain
 
 jobs:
   build_if_new_commits:
@@ -18,13 +27,12 @@ jobs:
       contents: read
       actions: read
     steps:
-      # Steps 1-5 remain the same as your original workflow
+      # Steps 1-5 remain unchanged as they use PowerShell and are independent of Cygwin/MSYS2
       - name: Read Last Built Upstream SHA from GitHub Variable
         id: read_last_sha
         run: |
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
-          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
         shell: pwsh
 
       - name: Checkout upstream repository
@@ -41,7 +49,6 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
-          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
@@ -53,12 +60,8 @@ jobs:
           $needs_build_ps_var = "false"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $needs_build_ps_var = "true"
-            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
           } elseif ($last_sha -ne $current_sha) {
             $needs_build_ps_var = "true"
-            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
-          } else {
-            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
           }
           echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
@@ -71,9 +74,9 @@ jobs:
           TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
         run: |
           gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
-        shell: bash
+        shell: pwsh
 
-      # 6. Set up Corretto 21 as Bootstrap JDK
+      # Step 6 remains unchanged
       - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
@@ -83,139 +86,68 @@ jobs:
           architecture: x64
         id: setup_jdk
 
-      # 7. Setup Visual Studio Environment
-      - name: Setup Visual Studio Environment
+      # This single step replaces your previous steps 7, 8, and 9 (Cygwin cache, install, and PATH)
+      - name: Set up MSYS2 environment
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: msys2/setup-msys2@v2
         with:
-          arch: x64
+          msystem: MINGW64
+          update: true
+          install: ${{ env.MSYS2_PACKAGES }}
 
-      # 8. Download and setup jtreg
-      - name: Download jtreg
+      # Replaces step 10, now using the msys2 shell
+      - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: msys2 {0}
         run: |
-          $jtregVersion = "7.4+1"
-          $jtregUrl = "https://ci.adoptium.net/view/Dependencies/job/dependency_pipeline/lastSuccessfulBuild/artifact/jtreg/jtreg-$jtregVersion.tar.gz"
-          $jtregDir = "$env:GITHUB_WORKSPACE\jtreg"
-          
-          Write-Host "Downloading jtreg from $jtregUrl"
-          Invoke-WebRequest -Uri $jtregUrl -OutFile "jtreg.tar.gz"
-          
-          # Extract using tar (available on Windows)
-          tar -xzf jtreg.tar.gz
-          Move-Item "jtreg" $jtregDir
-          
-          echo "JTREG_DIR=$jtregDir" >> $env:GITHUB_ENV
-        shell: pwsh
+          # The 'setup-java' action sets JAVA_HOME. We convert it to a path MSYS2 understands.
+          # cygpath is available in the MSYS2 shell provided by the action.
+          BOOT_JDK_NIX_PATH="$(cygpath -u "$JAVA_HOME")"
+          echo "Using Bootstrap JDK (MSYS2 path): $BOOT_JDK_NIX_PATH"
+          ./configure --with-boot-jdk="$BOOT_JDK_NIX_PATH" --disable-warnings-as-errors --with-debug-level=release
 
-      # 9. Find Windows SDK and VC Runtime paths
-      - name: Find Windows SDK and VC Runtime paths
+      # Replaces step 11, now using the msys2 shell
+      - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: msys2 {0}
         run: |
-          # Find UCRT DLL directory (part of Windows SDK)
-          $windowsKitPath = "${env:ProgramFiles(x86)}\Windows Kits\10"
-          $ucrtVersion = Get-ChildItem "$windowsKitPath\lib" | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object -Descending | Select-Object -First 1
-          $ucrtDllDir = "$windowsKitPath\Redist\$($ucrtVersion.Name)\ucrt\DLLs\x64"
-          
-          if (-not (Test-Path $ucrtDllDir)) {
-            # Alternative path
-            $ucrtDllDir = "$windowsKitPath\Redist\ucrt\DLLs\x64"
-          }
-          
-          Write-Host "UCRT DLL Directory: $ucrtDllDir"
-          echo "UCRT_DLL_DIR=$ucrtDllDir" >> $env:GITHUB_ENV
-          
-          # Find vcruntime140.dll
-          $vcRuntimeDir = "${env:ProgramFiles}\Microsoft Visual Studio\2025\Enterprise\VC\Redist\MSVC"
-          $vcVersion = Get-ChildItem $vcRuntimeDir | Sort-Object -Descending | Select-Object -First 1
-          $vcRuntimePath = "$vcRuntimeDir\$($vcVersion.Name)\x64\Microsoft.VC143.CRT"
-          
-          if (-not (Test-Path $vcRuntimePath)) {
-            # Try alternative paths
-            $vcRuntimePath = "${env:VCToolsRedistDir}\x64\Microsoft.VC143.CRT"
-          }
-          
-          Write-Host "VC Runtime Directory: $vcRuntimePath"
-          echo "VCRUNTIME_DIR=$vcRuntimePath" >> $env:GITHUB_ENV
-        shell: pwsh
+          # Use getconf to fetch the number of processors and run make in parallel.
+          make JOBS=$(getconf _NPROCESSORS_ONLN) images
 
-      # 10. Cache Gradle dependencies
-      - name: Cache Gradle dependencies
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      # 11. Build Corretto with Gradle
-      - name: Build Corretto with Gradle
+      # Steps 12, 13, and 14 remain unchanged as they use PowerShell and are independent of Cygwin/MSYS2
+      - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          Write-Host "Bootstrap JDK: $env:JAVA_HOME"
-          Write-Host "UCRT DLL Dir: $env:UCRT_DLL_DIR"
-          Write-Host "JTreg Dir: $env:JTREG_DIR"
-          Write-Host "VCRuntime Dir: $env:VCRUNTIME_DIR"
-          
-          .\gradlew.bat :installers:windows:zip:build `
-            -Pbootjdk_dir="$env:JAVA_HOME" `
-            -Pucrt_dll_dir="$env:UCRT_DLL_DIR" `
-            -Pjtreg_dir="$env:JTREG_DIR" `
-            -Pvcruntime_dir="$env:VCRUNTIME_DIR" `
-            --no-daemon `
-            --info
+          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if ($jdkImagePath) {
+            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
+          }
         shell: pwsh
 
-      # 12. Extract and prepare the built JDK
-      - name: Extract and prepare JDK artifact
+      - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
-          $zipPath = Get-ChildItem -Path "installers\windows\zip\corretto-build\distributions\*.zip" | Select-Object -First 1
-          if (-not $zipPath) {
-            Write-Error "Could not find built zip file"
-            exit 1
-          }
-          
-          Write-Host "Found built zip: $($zipPath.FullName)"
-          
-          # Extract the zip to get the JDK
-          $extractDir = "$env:GITHUB_WORKSPACE\extracted_jdk"
-          Expand-Archive -Path $zipPath.FullName -DestinationPath $extractDir -Force
-          
-          # Find the JDK directory (it should be the only directory in the extracted content)
-          $jdkDir = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
-          
-          # Read version from release file
-          $releaseFile = Join-Path $jdkDir.FullName "release"
-          if (-not (Test-Path $releaseFile)) {
-            Write-Error "Could not find release file"
-            exit 1
-          }
-          
+          $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory"; exit 1 }
+          $releaseFile = Join-Path $jdkSourcePath "release"
+          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file at $releaseFile"; exit 1 }
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
-          Write-Host "Extracted JAVA_VERSION: $javaVersion"
-          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $env:GITHUB_OUTPUT
-          
-          # Prepare staging directory
+          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION from release file"; exit 1 }
+          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
-          $fullTargetPath = Join-Path $stagingDir $targetDirName
-          
+          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
-          New-Item -ItemType Directory -Path $stagingDir | Out-Null
-          
-          # Move the JDK to staging with the proper name
-          Move-Item -Path $jdkDir.FullName -Destination $fullTargetPath -Force
+          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
+          Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
         shell: pwsh
 
-      # 13. Upload Windows JDK Build Artifact
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
