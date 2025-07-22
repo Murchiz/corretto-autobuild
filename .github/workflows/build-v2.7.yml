@@ -135,7 +135,7 @@ jobs:
           # Convert Windows path to Cygwin style
           $BOOT_JDK_CYGWIN = (& cygpath --unix $BOOT_JDK_WINDOWS).Trim()
           Write-Host "Using Bootstrap JDK (Cygwin path): $BOOT_JDK_CYGWIN"
-          C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release"
+          C:\cygwin64\bin\bash -c "./configure --with-boot-jdk='$BOOT_JDK_CYGWIN' --disable-warnings-as-errors --with-debug-level=release --with-native-debug-symbols=none"
         shell: pwsh
 
       # 11. Build Corretto using parallel execution (using all available processors)
@@ -147,21 +147,7 @@ jobs:
           C:\cygwin64\bin\bash -c "make JOBS=\$(getconf _NPROCESSORS_ONLN) images"
         shell: pwsh
 
-      # 12. Clean Debug Symbols from JDK Image
-      - name: Clean Debug Symbols from JDK Image
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
-          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) {
-            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
-            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Warning "Could not find JDK image directory to clean."
-          }
-        shell: pwsh
-
-      # 13. Prepare Artifact Structure (extract version info and repackage the build)
+      # 12. Prepare Artifact Structure (extract version info and repackage the build)
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
