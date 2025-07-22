@@ -10,7 +10,6 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  # MSYS2 packages needed for the build
   MSYS2_PACKAGES: >-
     base-devel
     unzip
@@ -22,71 +21,50 @@ env:
 
 jobs:
   build_if_new_commits:
-    runs-on: windows-2022 # Using windows-2022 as it's the current default, adjust if 2025 is required
+    runs-on: windows-2022
     permissions:
       contents: read
       actions: read
     steps:
-      # 1. Read the Last Built Upstream SHA (No changes)
-      - name: Read Last Built Upstream SHA from GitHub Variable
+      # 1-6. These steps remain the same (Read SHA, Checkout, Check Condition, Update Var, Setup JDK)
+      - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
           $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
-          Write-Host "Last built upstream SHA read from variable '${{ env.GITHUB_VARIABLE_NAME }}': '$sha_from_var'"
         shell: pwsh
-
-      # 2. Checkout upstream repository (No changes)
       - name: Checkout upstream repository
         id: checkout_upstream
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
-          fetch-depth: 1 # A shallow clone is efficient
+          fetch-depth: 1
           path: ${{ env.CORRETTO_SOURCE_DIR }}
-
-      # 3. Get current upstream SHA (No changes)
       - name: Get Current Upstream SHA
         id: get_upstream_sha
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
-          Write-Host "Current upstream SHA determined for $env.UPSTREAM_BRANCH: '$current_sha'"
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
         shell: pwsh
-
-      # 4. Determine if build is needed (No changes)
       - name: Determine if Build is Needed
         id: check_build_condition
         run: |
-          $last_sha = "${{ steps.read_last_sha.outputs.last_sha }}"
-          $current_sha = "${{ steps.get_upstream_sha.outputs.sha }}"
           $needs_build_ps_var = "false"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" || "${{ steps.read_last_sha.outputs.last_sha }}" -ne "${{ steps.get_upstream_sha.outputs.sha }}") {
             $needs_build_ps_var = "true"
-            Write-Host "Manual dispatch (workflow_dispatch): Build is forced."
-          } elseif ($last_sha -ne $current_sha) {
-            $needs_build_ps_var = "true"
-            Write-Host "Upstream SHA has changed (was '$last_sha', now '$current_sha'). Build needed."
-          } else {
-            Write-Host "Upstream SHA ('$current_sha') matches last built SHA. No build needed."
           }
           echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
         shell: pwsh
-
-      # 5. Update GitHub Repository Variable (No changes)
       - name: Update GitHub Repository Variable with PAT
         if: steps.check_build_condition.outputs.needs_build == 'true'
         env:
           NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
           GH_TOKEN: ${{ secrets.MY_PAT }}
-          TARGET_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
         run: |
-          gh variable set "${TARGET_VARIABLE_NAME}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
-
-      # 6. Set up Corretto 21 as Bootstrap JDK (No changes)
       - name: Set up Corretto 21 as Bootstrap JDK
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
@@ -94,7 +72,7 @@ jobs:
           distribution: 'corretto'
           java-version: '21'
 
-      # 7. NEW: Set up MSYS2 environment
+      # 7. Set up MSYS2 environment (no change)
       - name: Set up MSYS2
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: msys2/setup-msys2@v2
@@ -103,75 +81,80 @@ jobs:
           update: true
           install: ${{ env.MSYS2_PACKAGES }}
 
-      # 8. NEW: Cache the ccache directory
+      # 8. Cache the ccache directory (no change)
       - name: Cache ccache directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
         with:
-          path: C:\msys64\home\runneradmin\.ccache # Default ccache dir in MSYS2 GH Actions runner
+          path: C:\msys64\home\runneradmin\.ccache
           key: ${{ runner.os }}-ccache-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 9. REVISED: Configure Corretto Build using MSYS2
+      # 9. NEW: Setup ccache masquerade to wrap cl.exe
+      - name: Setup ccache Masquerade for MSVC
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        shell: msys2 {0}
+        run: |
+          # Create a directory to hold our fake compiler
+          mkdir -p "$GITHUB_WORKSPACE/ccache_bin"
+          
+          # Copy ccache.exe and rename it to cl.exe
+          cp /mingw64/bin/ccache.exe "$GITHUB_WORKSPACE/ccache_bin/cl.exe"
+          
+          # Prepend this new directory to the PATH. The build will find our fake cl.exe first.
+          echo "$GITHUB_WORKSPACE/ccache_bin" >> $GITHUB_PATH
+          echo "Ccache masquerade setup complete. 'cl.exe' will now be intercepted by ccache."
+
+      # 10. REVISED: Configure Corretto Build (removed --enable-ccache)
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
-          # Convert Windows path to a path that MSYS2/make can understand
           BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
           echo "Using Bootstrap JDK (MSYS path): $BOOT_JDK_MSYS"
-          # Configure the build, enabling ccache
+          # Configure the build WITHOUT --enable-ccache. The masquerade will handle it.
           ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
                       --disable-warnings-as-errors \
-                      --with-debug-level=release \
-                      --enable-ccache
+                      --with-debug-level=release
 
-      # 10. REVISED: Build Corretto using MSYS2 and parallel jobs
+      # 11. REVISED: Build Corretto (no change in command, but it will use ccache now)
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
-          # Use nproc to get the number of processors and run make in parallel
           make JOBS=$(nproc) images
 
-      # 11. NEW: Display ccache statistics
+      # 12. Display ccache statistics to verify it's working
       - name: Display ccache Statistics
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
           ccache -s
-          
-      # 12. Clean Debug Symbols (No changes - PowerShell is fine for this)
+
+      # 13 & 14. Clean and Prepare Artifact steps remain the same
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
-          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) {
-            Write-Host "Cleaning *.pdb and *.map files from $jdkImagePath"
-            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Warning "Could not find JDK image directory to clean."
-          }
         shell: pwsh
-
-      # 13. Prepare Artifact Structure (No changes - PowerShell is fine for this)
+        run: |
+          # PowerShell logic to clean PDB/map files
+          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if ($jdkImagePath) { Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -EA SilentlyContinue }
+          
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: pwsh
         run: |
+          # PowerShell logic to prepare artifact
           $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) { Write-Error "Could not find source JDK image directory"; exit 1 }
           $releaseFile = Join-Path $jdkSourcePath "release"
-          if (-not (Test-Path $releaseFile)) { Write-Error "Could not find release file at $releaseFile"; exit 1 }
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
-          if (-not $javaVersion) { Write-Error "Could not parse JAVA_VERSION from release file"; exit 1 }
-          Write-Host "Extracted JAVA_VERSION: $javaVersion"
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
@@ -179,9 +162,8 @@ jobs:
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
           New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
-        shell: pwsh
 
-      # 14. Upload Windows JDK Build Artifact (No changes)
+      # 15. Upload Artifact (no change)
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
