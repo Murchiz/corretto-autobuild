@@ -87,7 +87,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 9. Setup ccache
+      # 9. Setup ccache using printf
       - name: Setup ccache
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
@@ -105,8 +105,8 @@ jobs:
           echo "CCACHE_DIR=$CCACHE_DIR_UNIX" >> $GITHUB_ENV
 
           # *** THE CRITICAL FIX ***
-          # Use single quotes to prevent shell interpretation of the string.
-          echo 'sloppiness = msvc_pdb' > "$CCACHE_DIR_UNIX/ccache.conf"
+          # Use printf instead of echo to reliably write the configuration file.
+          printf '%s\n' 'sloppiness = msvc_pdb' > "$CCACHE_DIR_UNIX/ccache.conf"
 
       # 10. Verify ccache configuration
       - name: Verify ccache configuration
