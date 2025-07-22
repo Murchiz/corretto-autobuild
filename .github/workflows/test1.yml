@@ -89,7 +89,7 @@ jobs:
 
       # 9. REVISED: Setup masquerade and create ccache.conf
       - name: Setup ccache
-        if: steps.check_build_condition.outputs.needs__build == 'true'
+        if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
           # Create directories
