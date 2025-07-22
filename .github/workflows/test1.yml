@@ -87,40 +87,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 9. Setup ccache and sanitize the config file
-      - name: Setup ccache
+      # 9. NEW: Create ccache.conf using PowerShell for reliability
+      - name: Create ccache config file
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        shell: pwsh
+        run: |
+          $ccacheDir = "${{ github.workspace }}/.ccache"
+          $configFile = Join-Path $ccacheDir "ccache.conf"
+          New-Item -ItemType Directory -Path $ccacheDir -Force
+          # Create the content with a Unix-style newline (`n)
+          $content = "sloppiness = msvc_pdb`n"
+          # Write the file using ASCII encoding, which is safe for ccache
+          [System.IO.File]::WriteAllText($configFile, $content, [System.Text.Encoding]::ASCII)
+          Write-Host "Created ccache.conf with controlled encoding and line endings."
+
+      # 10. REVISED: Setup ccache masquerade and environment ONLY
+      - name: Setup ccache environment
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
-          # Create directories
-          mkdir -p "${{ github.workspace }}/.ccache"
+          # The config file already exists. We only need to set up the environment.
           mkdir -p "${{ github.workspace }}/ccache_bin"
-          
-          # Setup masquerade
           cp /mingw64/bin/ccache.exe "${{ github.workspace }}/ccache_bin/cl.exe"
           echo "${{ github.workspace }}/ccache_bin" >> $GITHUB_PATH
-
-          # Set cache directory path for MSYS2 environment
           CCACHE_DIR_UNIX=$(cygpath -u "${{ github.workspace }}/.ccache")
           echo "CCACHE_DIR=$CCACHE_DIR_UNIX" >> $GITHUB_ENV
 
-          # *** THE CRITICAL FIX ***
-          # Use a here-document, pipe it through tr to remove carriage returns (\r),
-          # and then write to the config file.
-          cat <<EOF | tr -d '\r' > "$CCACHE_DIR_UNIX/ccache.conf"
-          sloppiness = msvc_pdb
-          EOF
-
-      # 10. Verify ccache configuration
+      # 11. Verify ccache configuration
       - name: Verify ccache configuration
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
           echo "Verifying ccache configuration:"
           ccache -p
-          echo "---"
-          echo "Contents of ccache.conf:"
-          cat "$CCACHE_DIR/ccache.conf"
 
       # The rest of the workflow remains the same
       - name: Configure Corretto Build
