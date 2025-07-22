@@ -87,7 +87,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 9. REVISED: Setup masquerade and create ccache.conf
+      # 9. Setup ccache
       - name: Setup ccache
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
@@ -105,11 +105,10 @@ jobs:
           echo "CCACHE_DIR=$CCACHE_DIR_UNIX" >> $GITHUB_ENV
 
           # *** THE CRITICAL FIX ***
-          # Create the configuration file with the required setting.
-          echo "Creating ccache.conf with msvc_pdb sloppiness"
-          echo "sloppiness = msvc_pdb" > "$CCACHE_DIR_UNIX/ccache.conf"
+          # Use single quotes to prevent shell interpretation of the string.
+          echo 'sloppiness = msvc_pdb' > "$CCACHE_DIR_UNIX/ccache.conf"
 
-      # 10. Verify ccache configuration (This will now show the correct setting)
+      # 10. Verify ccache configuration
       - name: Verify ccache configuration
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
