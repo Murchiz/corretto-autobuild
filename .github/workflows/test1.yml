@@ -26,7 +26,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      # Steps 1-6 remain unchanged
+      # Steps 1-8 remain unchanged
       - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
@@ -71,8 +71,6 @@ jobs:
         with:
           distribution: 'corretto'
           java-version: '21'
-
-      # 7. Set up MSYS2 environment
       - name: Set up MSYS2
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: msys2/setup-msys2@v2
@@ -80,9 +78,6 @@ jobs:
           msystem: MINGW64
           update: true
           install: ${{ env.MSYS2_PACKAGES }}
-
-      # 8. Cache the ccache directory (NO CHANGE HERE)
-      # This action runs outside msys2, so it needs the Windows-style path.
       - name: Cache ccache directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
@@ -92,26 +87,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 9. REVISED: Setup masquerade and convert CCACHE_DIR path
-      - name: Setup ccache Masquerade and Directory
+      # 9. REVISED: Setup masquerade, directory, AND ccache configuration
+      - name: Setup ccache
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
-          # Explicitly create the cache directory first to be safe.
+          # Create directories
           mkdir -p "${{ github.workspace }}/.ccache"
-
-          # Setup the cl.exe masquerade
           mkdir -p "${{ github.workspace }}/ccache_bin"
+          
+          # Setup masquerade
           cp /mingw64/bin/ccache.exe "${{ github.workspace }}/ccache_bin/cl.exe"
           echo "${{ github.workspace }}/ccache_bin" >> $GITHUB_PATH
 
-          # *** THE CRITICAL FIX ***
-          # Convert the Windows GITHUB_WORKSPACE path to a UNIX path for ccache.
+          # Set cache directory path for MSYS2 environment
           CCACHE_DIR_UNIX=$(cygpath -u "${{ github.workspace }}/.ccache")
-          echo "Setting CCACHE_DIR for MSYS2 environment to: $CCACHE_DIR_UNIX"
           echo "CCACHE_DIR=$CCACHE_DIR_UNIX" >> $GITHUB_ENV
 
-      # 10. Configure Corretto Build (No change)
+          # *** THE CRITICAL FIX ***
+          # Set the sloppiness option to allow caching with MSVC PDB files.
+          echo "Setting ccache sloppiness for MSVC"
+          ccache -o "sloppiness=msvc_pdb"
+
+      # 10. NEW: Verify ccache configuration
+      - name: Verify ccache configuration
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        shell: msys2 {0}
+        run: |
+          echo "Verifying ccache configuration:"
+          ccache -p
+
+      # 11. Configure Corretto Build
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -122,7 +128,7 @@ jobs:
                       --disable-warnings-as-errors \
                       --with-debug-level=release
 
-      # 11. Build Corretto (No change)
+      # 12. Build Corretto
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -130,7 +136,7 @@ jobs:
         run: |
           make JOBS=$(nproc) images
 
-      # 12. Display ccache statistics (This will now work)
+      # 13. Display ccache statistics
       - name: Display ccache Statistics
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
@@ -138,7 +144,7 @@ jobs:
           echo "Final ccache statistics:"
           ccache -s
 
-      # 13-15. Final steps remain the same
+      # 14-16. Final steps remain the same
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -146,7 +152,6 @@ jobs:
         run: |
           $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
           if ($jdkImagePath) { Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -EA SilentlyContinue }
-          
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
@@ -164,7 +169,6 @@ jobs:
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
           New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
-
       - name: Upload Windows JDK Build Artifact
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
