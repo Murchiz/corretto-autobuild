@@ -72,7 +72,7 @@ jobs:
           distribution: 'corretto'
           java-version: '21'
 
-      # 7. Set up MSYS2 environment (no change)
+      # 7. Set up MSYS2 environment
       - name: Set up MSYS2
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: msys2/setup-msys2@v2
@@ -81,36 +81,37 @@ jobs:
           update: true
           install: ${{ env.MSYS2_PACKAGES }}
 
-      # 8. REVISED: Cache the ccache directory using a reliable path
+      # 8. Cache the ccache directory (NO CHANGE HERE)
+      # This action runs outside msys2, so it needs the Windows-style path.
       - name: Cache ccache directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/cache@v4
         with:
-          # Use the same path we define in the next step.
           path: ${{ github.workspace }}/.ccache
           key: ${{ runner.os }}-ccache-${{ steps.get_upstream_sha.outputs.sha }}
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 9. REVISED: Setup ccache masquerade and EXPLICITLY set the cache directory
+      # 9. REVISED: Setup masquerade and convert CCACHE_DIR path
       - name: Setup ccache Masquerade and Directory
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
-          # Create a directory to hold our fake compiler
-          mkdir -p "$GITHUB_WORKSPACE/ccache_bin"
-          cp /mingw64/bin/ccache.exe "$GITHUB_WORKSPACE/ccache_bin/cl.exe"
-          
-          # Prepend the masquerade directory to the PATH
-          echo "$GITHUB_WORKSPACE/ccache_bin" >> $GITHUB_PATH
-          
-          # **NEW**: Explicitly set the CCACHE_DIR environment variable for all subsequent steps
-          # This ensures ccache writes to a predictable location that we can cache.
-          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
-          
-          echo "Ccache masquerade and directory setup complete."
+          # Explicitly create the cache directory first to be safe.
+          mkdir -p "${{ github.workspace }}/.ccache"
 
-      # 10. Configure Corretto Build (no changes needed, it will inherit CCACHE_DIR)
+          # Setup the cl.exe masquerade
+          mkdir -p "${{ github.workspace }}/ccache_bin"
+          cp /mingw64/bin/ccache.exe "${{ github.workspace }}/ccache_bin/cl.exe"
+          echo "${{ github.workspace }}/ccache_bin" >> $GITHUB_PATH
+
+          # *** THE CRITICAL FIX ***
+          # Convert the Windows GITHUB_WORKSPACE path to a UNIX path for ccache.
+          CCACHE_DIR_UNIX=$(cygpath -u "${{ github.workspace }}/.ccache")
+          echo "Setting CCACHE_DIR for MSYS2 environment to: $CCACHE_DIR_UNIX"
+          echo "CCACHE_DIR=$CCACHE_DIR_UNIX" >> $GITHUB_ENV
+
+      # 10. Configure Corretto Build (No change)
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -119,10 +120,9 @@ jobs:
           BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
           ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
                       --disable-warnings-as-errors \
-                      --with-debug-level=release \
-                      --with-native-debug-symbols=none
+                      --with-debug-level=release
 
-      # 11. Build Corretto (no changes needed, it will use ccache via the masquerade)
+      # 11. Build Corretto (No change)
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -130,11 +130,12 @@ jobs:
         run: |
           make JOBS=$(nproc) images
 
-      # 12. Display ccache statistics (will now show correct stats from CCACHE_DIR)
+      # 12. Display ccache statistics (This will now work)
       - name: Display ccache Statistics
         if: steps.check_build_condition.outputs.needs_build == 'true'
         shell: msys2 {0}
         run: |
+          echo "Final ccache statistics:"
           ccache -s
 
       # 13-15. Final steps remain the same
