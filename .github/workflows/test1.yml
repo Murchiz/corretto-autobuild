@@ -119,7 +119,8 @@ jobs:
           BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
           ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
                       --disable-warnings-as-errors \
-                      --with-debug-level=release
+                      --with-debug-level=release \
+                      --with-native-debug-symbols=none
 
       # 11. Build Corretto (no changes needed, it will use ccache via the masquerade)
       - name: Build Corretto (make images)
