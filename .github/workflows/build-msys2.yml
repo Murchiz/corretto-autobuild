@@ -47,7 +47,6 @@ jobs:
           - name: "D-Drive-Build"
             configure_args: ""
             jobs: "4"
-            build_dir: "D:"
 
     steps:
       - name: Read Last Built Upstream SHA
@@ -63,10 +62,10 @@ jobs:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
           fetch-depth: 1
-          path: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
+          path: ${{ env.CORRETTO_SOURCE_DIR }}
       - name: Get Current Upstream SHA
         id: get_upstream_sha
-        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
@@ -101,9 +100,14 @@ jobs:
           msystem: MINGW64
           update: true
           install: ${{ env.MSYS2_PACKAGES }}
+      - name: Create D drive build directory
+        if: matrix.build_config.build_dir == 'D:'
+        run: |
+          mkdir D:/${{ env.CORRETTO_SOURCE_DIR }}
+          cp -r ${{ env.CORRETTO_SOURCE_DIR }}/* D:/${{ env.CORRETTO_SOURCE_DIR }}/
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.name == 'D-Drive-Build' && 'D:' || '.' }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
           BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
@@ -113,13 +117,13 @@ jobs:
                       ${{ matrix.build_config.configure_args }}
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.name == 'D-Drive-Build' && 'D:' || '.' }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
           make JOBS=${{ matrix.build_config.jobs }} images LOG=info
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.name == 'D-Drive-Build' && 'D:' || '.' }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
           $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
@@ -127,7 +131,7 @@ jobs:
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
-        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.name == 'D-Drive-Build' && 'D:' || '.' }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
           $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
@@ -135,7 +139,7 @@ jobs:
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
-          $stagingDir = Join-Path "${{ matrix.build_config.build_dir }}" "staging_artifact"
+          $stagingDir = Join-Path "${{ matrix.build_config.name == 'D-Drive-Build' && 'D:' || '.' }}" "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
           $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
@@ -146,4 +150,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk-${{ matrix.build_config.name }}
-          path: ${{ matrix.build_config.build_dir }}/staging_artifact/
+          path: ${{ matrix.build_config.name == 'D-Drive-Build' && 'D:' || '.' }}/staging_artifact/
