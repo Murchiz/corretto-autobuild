@@ -1,4 +1,4 @@
-name: Build Corretto 21 lilliput-2 for Windows with MSYS2 and ccache
+name: Msys2
 
 on:
   schedule:
@@ -17,7 +17,6 @@ env:
     autoconf
     automake
     mingw-w64-x86_64-toolchain
-    mingw-w64-x86_64-ccache
 
 jobs:
   build_if_new_commits:
@@ -26,7 +25,6 @@ jobs:
       contents: read
       actions: read
     steps:
-      # Steps 1-8 remain unchanged
       - name: Read Last Built Upstream SHA
         id: read_last_sha
         run: |
@@ -78,50 +76,6 @@ jobs:
           msystem: MINGW64
           update: true
           install: ${{ env.MSYS2_PACKAGES }}
-      - name: Cache ccache directory
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-ccache-${{ steps.get_upstream_sha.outputs.sha }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-
-      # 9. NEW: Create ccache.conf using PowerShell for reliability
-      - name: Create ccache config file
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        shell: pwsh
-        run: |
-          $ccacheDir = "${{ github.workspace }}/.ccache"
-          $configFile = Join-Path $ccacheDir "ccache.conf"
-          New-Item -ItemType Directory -Path $ccacheDir -Force
-          # Create the content with a Unix-style newline (`n)
-          $content = "sloppiness = msvc_pdb`n"
-          # Write the file using ASCII encoding, which is safe for ccache
-          [System.IO.File]::WriteAllText($configFile, $content, [System.Text.Encoding]::ASCII)
-          Write-Host "Created ccache.conf with controlled encoding and line endings."
-
-      # 10. REVISED: Setup ccache masquerade and environment ONLY
-      - name: Setup ccache environment
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        shell: msys2 {0}
-        run: |
-          # The config file already exists. We only need to set up the environment.
-          mkdir -p "${{ github.workspace }}/ccache_bin"
-          cp /mingw64/bin/ccache.exe "${{ github.workspace }}/ccache_bin/cl.exe"
-          echo "${{ github.workspace }}/ccache_bin" >> $GITHUB_PATH
-          CCACHE_DIR_UNIX=$(cygpath -u "${{ github.workspace }}/.ccache")
-          echo "CCACHE_DIR=$CCACHE_DIR_UNIX" >> $GITHUB_ENV
-
-      # 11. Verify ccache configuration
-      - name: Verify ccache configuration
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        shell: msys2 {0}
-        run: |
-          echo "Verifying ccache configuration:"
-          ccache -p
-
-      # The rest of the workflow remains the same
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
@@ -137,12 +91,6 @@ jobs:
         shell: msys2 {0}
         run: |
           make JOBS=$(nproc) images
-      - name: Display ccache Statistics
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        shell: msys2 {0}
-        run: |
-          echo "Final ccache statistics:"
-          ccache -s
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
