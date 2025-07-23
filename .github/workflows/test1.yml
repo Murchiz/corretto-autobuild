@@ -1,0 +1,103 @@
+name: Build Corretto 21 lilliput-2 Msys2 edition
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+env:
+  UPSTREAM_REPO: corretto/corretto-21
+  UPSTREAM_BRANCH: lilliput-2
+  LAST_SHA_VAR: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+  SOURCE_DIR: corretto_source
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_build: ${{ steps.check.outputs.needs_build }}
+      current_sha: ${{ steps.check.outputs.current_sha }}
+    steps:
+      - name: Check if build needed
+        id: check
+        run: |
+          lastSha="${{ vars.LAST_BUILT_CORRETTO_LILLIPUT_SHA || '' }}"
+          currentSha=$(curl -s "https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/commits/${{ env.UPSTREAM_BRANCH }}" | jq -r .sha)
+          needsBuild=false
+          if [[ "$lastSha" != "$currentSha" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            needsBuild=true
+          fi
+          echo "needs_build=$needsBuild" >> $GITHUB_OUTPUT
+          echo "current_sha=$currentSha" >> $GITHUB_OUTPUT
+
+  build:
+    needs: check
+    if: needs.check.outputs.needs_build == 'true'
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+          path: ${{ env.SOURCE_DIR }}
+
+      - name: Setup build environment
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: base-devel unzip zip autoconf automake mingw-w64-x86_64-toolchain
+
+      - name: Setup Bootstrap JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21'
+
+      - name: Configure Corretto
+        working-directory: ${{ env.SOURCE_DIR }}
+        shell: msys2 {0}
+        run: |
+          ./configure --with-boot-jdk="$(cygpath -u "$JAVA_HOME")" \
+                      --disable-warnings-as-errors \
+                      --with-debug-level=release
+
+      - name: Build Corretto
+        working-directory: ${{ env.SOURCE_DIR }}
+        shell: msys2 {0}
+        run: |
+          make JOBS=$(nproc) images
+
+      - name: Prepare artifact
+        id: artifact
+        shell: pwsh
+        run: |
+          $jdkPath = Get-ChildItem "${{ env.SOURCE_DIR }}/build/*/images/jdk" -Directory | Select -First 1
+          
+          # Remove debug symbols
+          Get-ChildItem $jdkPath -Recurse -Include "*.pdb","*.map" | Remove-Item -Force -EA SilentlyContinue
+          
+          # Get version from release file
+          $version = (Get-Content "$jdkPath/release" | Select-String 'JAVA_VERSION="([^"]+)"').Matches[0].Groups[1].Value
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          
+          # Stage artifact
+          $artifactDir = "staging/corretto-21-lilliput-$version"
+          New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
+          Move-Item "$jdkPath/*" $artifactDir -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: corretto-21-lilliput-${{ steps.artifact.outputs.version }}-windows-x64-jdk
+          path: staging/
+
+      - name: Update last built SHA
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          gh variable set "${{ env.LAST_SHA_VAR }}" --body "${{ needs.check.outputs.current_sha }}" --repo "${{ github.repository }}"
