@@ -24,6 +24,31 @@ jobs:
     permissions:
       contents: read
       actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        build_config:
+          - name: "Default"
+            configure_args: ""
+            jobs: "4"
+            build_dir: "C:"
+          - name: "8-cores-12G-mem"
+            configure_args: "--with-num-cores=8 --with-memory-size=12288"
+            jobs: "8"
+            build_dir: "C:"
+          - name: "Disable-PCH"
+            configure_args: "--disable-precompiled-headers"
+            jobs: "4"
+            build_dir: "C:"
+          - name: "Disable-Javac-Server"
+            configure_args: "--disable-javac-server"
+            jobs: "4"
+            build_dir: "C:"
+          - name: "D-Drive-Build"
+            configure_args: ""
+            jobs: "4"
+            build_dir: "D:"
+
     steps:
       - name: Read Last Built Upstream SHA
         id: read_last_sha
@@ -38,10 +63,10 @@ jobs:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ env.UPSTREAM_BRANCH }}
           fetch-depth: 1
-          path: ${{ env.CORRETTO_SOURCE_DIR }}
+          path: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
       - name: Get Current Upstream SHA
         id: get_upstream_sha
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
         run: |
           $current_sha = (git rev-parse HEAD).Trim()
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
@@ -78,22 +103,23 @@ jobs:
           install: ${{ env.MSYS2_PACKAGES }}
       - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
           BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
           ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
                       --disable-warnings-as-errors \
-                      --with-debug-level=release
+                      --with-debug-level=release \
+                      ${{ matrix.build_config.configure_args }}
       - name: Build Corretto (make images)
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
-          make JOBS=$(nproc) images
+          make JOBS=${{ matrix.build_config.jobs }} images LOG=info
       - name: Clean Debug Symbols from JDK Image
         if: steps.check_build_condition.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
           $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
@@ -101,7 +127,7 @@ jobs:
       - name: Prepare Artifact Structure
         if: steps.check_build_condition.outputs.needs_build == 'true'
         id: prepare_artifact
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        working-directory: ${{ matrix.build_config.build_dir }}/${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
           $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
@@ -109,7 +135,7 @@ jobs:
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
-          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
+          $stagingDir = Join-Path "${{ matrix.build_config.build_dir }}" "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
           $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
           if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
@@ -119,5 +145,5 @@ jobs:
         if: steps.check_build_condition.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
-          path: staging_artifact/
+          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk-${{ matrix.build_config.name }}
+          path: ${{ matrix.build_config.build_dir }}/staging_artifact/
