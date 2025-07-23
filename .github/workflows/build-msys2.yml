@@ -1,4 +1,4 @@
-name: Msys2
+name: Build Corretto 21 lilliput-2 Msys2 edition
 
 on:
   schedule:
