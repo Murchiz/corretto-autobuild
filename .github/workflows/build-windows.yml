@@ -26,7 +26,7 @@
 name: 'Build (windows)'
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       platform:
         required: true
