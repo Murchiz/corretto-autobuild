@@ -58,7 +58,7 @@ jobs:
           fetch-depth: 1
           path: ${{ env.CORRETTO_SOURCE_DIR }}
       
-      - name: Move source to D: drive for faster builds
+      - name: Move source to D drive for faster builds
         run: |
           $sourceOnC = Join-Path $env:GITHUB_WORKSPACE $env:CORRETTO_SOURCE_DIR
           $sourceOnD = Join-Path $env:WORKSPACE_ROOT $env:CORRETTO_SOURCE_DIR
@@ -110,7 +110,7 @@ jobs:
           update: true
           install: ${{ env.MSYS2_PACKAGES }}
       
-      - name: Configure Corretto Build (Optimized)
+      - name: Configure Corretto Build
         if: steps.check_build_condition.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
