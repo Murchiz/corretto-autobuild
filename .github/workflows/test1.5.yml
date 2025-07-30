@@ -37,7 +37,7 @@ jobs:
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
         shell: pwsh
       
-      - name: Set up workspace on faster D: drive
+      - name: Set up workspace on faster D drive
         run: |
           # Create workspace on D: drive for better performance
           $workspaceOnD = "D:\gh_workspace"
