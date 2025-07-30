@@ -122,6 +122,7 @@ jobs:
           ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
                       --disable-warnings-as-errors \
                       --with-debug-level=release \
+                      --with-native-debug-symbols=none \
                       --with-num-cores=${{ env.BUILD_CORES }} \
                       --with-memory-size=${{ env.BUILD_MEMORY }} \
                       --with-jobs=${{ env.BUILD_JOBS }} \
@@ -139,16 +140,6 @@ jobs:
           export TEMP=/d/tmp
           
           make JOBS=${{ env.BUILD_JOBS }} images
-      
-      - name: Clean Debug Symbols from JDK Image
-        if: steps.quick_check.outputs.needs_build == 'true'
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        shell: pwsh
-        run: |
-          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) { 
-            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map", "*.diz" | Remove-Item -Force -EA SilentlyContinue
-          }
       
       - name: Prepare Artifact Structure
         if: steps.quick_check.outputs.needs_build == 'true'
