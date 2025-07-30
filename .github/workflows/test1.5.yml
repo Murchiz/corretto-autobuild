@@ -10,15 +10,8 @@ env:
   UPSTREAM_BRANCH: lilliput-2
   GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
   CORRETTO_SOURCE_DIR: corretto_source_checkout
-  MSYS2_PACKAGES: >-
-    base-devel
-    unzip
-    zip
-    autoconf
-    automake
-    mingw-w64-x86_64-toolchain
-  # Optimization settings based on performance testing
-  BUILD_JOBS: 8  # max_parallel_jobs showed best performance
+  # Optimization settings
+  BUILD_JOBS: 8
   BUILD_CORES: 4
   BUILD_MEMORY: 16384
   JVM_ARGS: "-Xmx8G"
@@ -37,91 +30,94 @@ jobs:
           echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
         shell: pwsh
       
-      - name: Set up workspace on faster D drive
+      # Optimization: Do SHA check before heavy operations
+      - name: Quick SHA Check
+        id: quick_check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Create workspace on D: drive for better performance
-          $workspaceOnD = "D:\gh_workspace"
-          if (Test-Path $workspaceOnD) {
-            Remove-Item -Recurse -Force $workspaceOnD
+          $needs_build = "false"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $needs_build = "true"
+          } else {
+            # Use GitHub API to check latest commit without full checkout
+            $latest_sha = gh api repos/${{ env.UPSTREAM_REPO }}/commits/${{ env.UPSTREAM_BRANCH }} --jq .sha
+            if ("${{ steps.read_last_sha.outputs.last_sha }}" -ne "$latest_sha") {
+              $needs_build = "true"
+            }
+            echo "upstream_sha=$latest_sha" >> $env:GITHUB_OUTPUT
           }
-          New-Item -ItemType Directory -Path $workspaceOnD | Out-Null
+          echo "needs_build=$needs_build" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+      
+      # Skip all following steps if no build needed
+      - name: Exit early if no build needed
+        if: steps.quick_check.outputs.needs_build == 'false'
+        run: |
+          Write-Host "No new commits found. Skipping build."
+          exit 0
+        shell: pwsh
+      
+      - name: Set up workspace on faster D drive
+        if: steps.quick_check.outputs.needs_build == 'true'
+        run: |
+          $workspaceOnD = "D:\gh_workspace"
+          New-Item -ItemType Directory -Path $workspaceOnD -Force | Out-Null
           echo "WORKSPACE_ROOT=$workspaceOnD" >> $env:GITHUB_ENV
-          echo "Using D: drive for improved build performance"
         shell: pwsh
       
-      - name: Checkout upstream repository
+      # Optimization: Shallow clone directly to D: drive
+      - name: Checkout upstream repository to D drive
+        if: steps.quick_check.outputs.needs_build == 'true'
         id: checkout_upstream
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ env.UPSTREAM_BRANCH }}
-          fetch-depth: 1
-          path: ${{ env.CORRETTO_SOURCE_DIR }}
-      
-      - name: Move source to D drive for faster builds
+        working-directory: D:\gh_workspace
         run: |
-          $sourceOnC = Join-Path $env:GITHUB_WORKSPACE $env:CORRETTO_SOURCE_DIR
-          $sourceOnD = Join-Path $env:WORKSPACE_ROOT $env:CORRETTO_SOURCE_DIR
-          Write-Host "Moving source from C: to D: drive..."
-          Move-Item -Path $sourceOnC -Destination $sourceOnD -Force
-          # Update path for subsequent steps
-          echo "CORRETTO_SOURCE_DIR=$sourceOnD" >> $env:GITHUB_ENV
-        shell: pwsh
-      
-      - name: Get Current Upstream SHA
-        id: get_upstream_sha
-        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
-        run: |
+          git clone --depth 1 --branch ${{ env.UPSTREAM_BRANCH }} https://github.com/${{ env.UPSTREAM_REPO }}.git ${{ env.CORRETTO_SOURCE_DIR }}
+          cd ${{ env.CORRETTO_SOURCE_DIR }}
           $current_sha = (git rev-parse HEAD).Trim()
           echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
+          # Update the full path
+          $fullPath = Join-Path $env:WORKSPACE_ROOT $env:CORRETTO_SOURCE_DIR
+          echo "CORRETTO_SOURCE_DIR=$fullPath" >> $env:GITHUB_ENV
         shell: pwsh
       
-      - name: Determine if Build is Needed
-        id: check_build_condition
-        run: |
-          $needs_build_ps_var = "false"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch" || "${{ steps.read_last_sha.outputs.last_sha }}" -ne "${{ steps.get_upstream_sha.outputs.sha }}") {
-            $needs_build_ps_var = "true"
-          }
-          echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
-        shell: pwsh
-      
-      - name: Update GitHub Repository Variable with PAT
-        if: steps.check_build_condition.outputs.needs_build == 'true'
-        env:
-          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MY_PAT }}
-        run: |
-          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
-        shell: bash
-      
+      # Optimization: Parallel setup of dependencies
       - name: Set up Corretto 21 as Bootstrap JDK
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+        if: steps.quick_check.outputs.needs_build == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'corretto'
           java-version: '21'
       
-      - name: Set up MSYS2
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+      # Use exact MSYS2 config from Corretto
+      - name: Install MSYS2
+        if: steps.quick_check.outputs.needs_build == 'true'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
-          update: true
-          install: ${{ env.MSYS2_PACKAGES }}
+          install: 'autoconf tar unzip zip make'
+          path-type: minimal
+          location: D:\msys2_minimal
       
-      - name: Configure Corretto Build
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+      # Optimization: Set MSYS2 temp to D: drive
+      - name: Configure build environment
+        if: steps.quick_check.outputs.needs_build == 'true'
+        shell: msys2 {0}
+        run: |
+          mkdir -p /d/tmp
+          echo "export TMPDIR=/d/tmp" >> ~/.bashrc
+          echo "export TMP=/d/tmp" >> ~/.bashrc
+          echo "export TEMP=/d/tmp" >> ~/.bashrc
+      
+      - name: Configure Corretto Build Optimized
+        if: steps.quick_check.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
-          BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
+          export TMPDIR=/d/tmp
+          export TMP=/d/tmp
+          export TEMP=/d/tmp
           
-          echo "Configuring with optimized settings:"
-          echo "- Parallel jobs: ${{ env.BUILD_JOBS }}"
-          echo "- CPU cores: ${{ env.BUILD_CORES }}"
-          echo "- Memory: ${{ env.BUILD_MEMORY }}MB"
-          echo "- JVM args: ${{ env.JVM_ARGS }}"
+          BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
           
           ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
                       --disable-warnings-as-errors \
@@ -130,26 +126,32 @@ jobs:
                       --with-memory-size=${{ env.BUILD_MEMORY }} \
                       --with-jobs=${{ env.BUILD_JOBS }} \
                       --with-boot-jdk-jvmargs="${{ env.JVM_ARGS }}" \
-                      --enable-javac-server
+                      --enable-javac-server \
+                      --disable-full-docs
       
-      - name: Build Corretto (make images) - Optimized
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+      - name: Build Corretto make images Optimized
+        if: steps.quick_check.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
         run: |
-          echo "Building with ${{ env.BUILD_JOBS }} parallel jobs..."
-          make JOBS=${{ env.BUILD_JOBS }} LOG=info images
+          export TMPDIR=/d/tmp
+          export TMP=/d/tmp
+          export TEMP=/d/tmp
+          
+          make JOBS=${{ env.BUILD_JOBS }} images
       
       - name: Clean Debug Symbols from JDK Image
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+        if: steps.quick_check.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
           $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          if ($jdkImagePath) { Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -EA SilentlyContinue }
+          if ($jdkImagePath) { 
+            Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map", "*.diz" | Remove-Item -Force -EA SilentlyContinue
+          }
       
       - name: Prepare Artifact Structure
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+        if: steps.quick_check.outputs.needs_build == 'true'
         id: prepare_artifact
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
@@ -160,20 +162,26 @@ jobs:
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
           
-          # Create staging directory on C: for artifact upload
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
           $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
-          if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
-          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
+          New-Item -ItemType Directory -Path $fullTargetPathInStaging -Force | Out-Null
           
-          # Move from D: to C: for artifact upload
-          Write-Host "Moving build artifacts from D: to C: for upload..."
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
       
       - name: Upload Windows JDK Build Artifact
-        if: steps.check_build_condition.outputs.needs_build == 'true'
+        if: steps.quick_check.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
           path: staging_artifact/
+      
+      # Update SHA only after successful build and upload
+      - name: Update GitHub Repository Variable with PAT
+        if: steps.quick_check.outputs.needs_build == 'true'
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.quick_check.outputs.upstream_sha || steps.checkout_upstream.outputs.sha }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
+        shell: bash
