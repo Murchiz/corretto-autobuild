@@ -1,1 +1,179 @@
+name: Build Corretto 21 lilliput-2 Msys2 edition
 
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+env:
+  UPSTREAM_REPO: corretto/corretto-21
+  UPSTREAM_BRANCH: lilliput-2
+  GITHUB_VARIABLE_NAME: LAST_BUILT_CORRETTO_LILLIPUT_SHA
+  CORRETTO_SOURCE_DIR: corretto_source_checkout
+  MSYS2_PACKAGES: >-
+    base-devel
+    unzip
+    zip
+    autoconf
+    automake
+    mingw-w64-x86_64-toolchain
+  # Optimization settings based on performance testing
+  BUILD_JOBS: 8  # max_parallel_jobs showed best performance
+  BUILD_CORES: 4
+  BUILD_MEMORY: 16384
+  JVM_ARGS: "-Xmx8G"
+
+jobs:
+  build_if_new_commits:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Read Last Built Upstream SHA
+        id: read_last_sha
+        run: |
+          $sha_from_var = "${{ vars[env.GITHUB_VARIABLE_NAME] || '' }}"
+          echo "last_sha=$sha_from_var" >> $GITHUB_OUTPUT
+        shell: pwsh
+      
+      - name: Set up workspace on faster D: drive
+        run: |
+          # Create workspace on D: drive for better performance
+          $workspaceOnD = "D:\gh_workspace"
+          if (Test-Path $workspaceOnD) {
+            Remove-Item -Recurse -Force $workspaceOnD
+          }
+          New-Item -ItemType Directory -Path $workspaceOnD | Out-Null
+          echo "WORKSPACE_ROOT=$workspaceOnD" >> $env:GITHUB_ENV
+          echo "Using D: drive for improved build performance"
+        shell: pwsh
+      
+      - name: Checkout upstream repository
+        id: checkout_upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_BRANCH }}
+          fetch-depth: 1
+          path: ${{ env.CORRETTO_SOURCE_DIR }}
+      
+      - name: Move source to D: drive for faster builds
+        run: |
+          $sourceOnC = Join-Path $env:GITHUB_WORKSPACE $env:CORRETTO_SOURCE_DIR
+          $sourceOnD = Join-Path $env:WORKSPACE_ROOT $env:CORRETTO_SOURCE_DIR
+          Write-Host "Moving source from C: to D: drive..."
+          Move-Item -Path $sourceOnC -Destination $sourceOnD -Force
+          # Update path for subsequent steps
+          echo "CORRETTO_SOURCE_DIR=$sourceOnD" >> $env:GITHUB_ENV
+        shell: pwsh
+      
+      - name: Get Current Upstream SHA
+        id: get_upstream_sha
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        run: |
+          $current_sha = (git rev-parse HEAD).Trim()
+          echo "sha=$current_sha" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+      
+      - name: Determine if Build is Needed
+        id: check_build_condition
+        run: |
+          $needs_build_ps_var = "false"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" || "${{ steps.read_last_sha.outputs.last_sha }}" -ne "${{ steps.get_upstream_sha.outputs.sha }}") {
+            $needs_build_ps_var = "true"
+          }
+          echo "needs_build=$needs_build_ps_var" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+      
+      - name: Update GitHub Repository Variable with PAT
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        env:
+          NEW_SHA_TO_SAVE: ${{ steps.get_upstream_sha.outputs.sha }}
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
+        shell: bash
+      
+      - name: Set up Corretto 21 as Bootstrap JDK
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '21'
+      
+      - name: Set up MSYS2
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: ${{ env.MSYS2_PACKAGES }}
+      
+      - name: Configure Corretto Build (Optimized)
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: msys2 {0}
+        run: |
+          BOOT_JDK_MSYS=$(cygpath -u "$JAVA_HOME")
+          
+          echo "Configuring with optimized settings:"
+          echo "- Parallel jobs: ${{ env.BUILD_JOBS }}"
+          echo "- CPU cores: ${{ env.BUILD_CORES }}"
+          echo "- Memory: ${{ env.BUILD_MEMORY }}MB"
+          echo "- JVM args: ${{ env.JVM_ARGS }}"
+          
+          ./configure --with-boot-jdk="$BOOT_JDK_MSYS" \
+                      --disable-warnings-as-errors \
+                      --with-debug-level=release \
+                      --with-num-cores=${{ env.BUILD_CORES }} \
+                      --with-memory-size=${{ env.BUILD_MEMORY }} \
+                      --with-jobs=${{ env.BUILD_JOBS }} \
+                      --with-boot-jdk-jvmargs="${{ env.JVM_ARGS }}" \
+                      --enable-javac-server
+      
+      - name: Build Corretto (make images) - Optimized
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: msys2 {0}
+        run: |
+          echo "Building with ${{ env.BUILD_JOBS }} parallel jobs..."
+          make JOBS=${{ env.BUILD_JOBS }} LOG=info images
+      
+      - name: Clean Debug Symbols from JDK Image
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: pwsh
+        run: |
+          $jdkImagePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          if ($jdkImagePath) { Get-ChildItem -Path $jdkImagePath -Recurse -Include "*.pdb", "*.map" | Remove-Item -Force -EA SilentlyContinue }
+      
+      - name: Prepare Artifact Structure
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        id: prepare_artifact
+        working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
+        shell: pwsh
+        run: |
+          $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          $releaseFile = Join-Path $jdkSourcePath "release"
+          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
+          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
+          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
+          
+          # Create staging directory on C: for artifact upload
+          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
+          $targetDirName = "corretto-21-lilliput-${javaVersion}"
+          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
+          if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
+          New-Item -ItemType Directory -Path $fullTargetPathInStaging | Out-Null
+          
+          # Move from D: to C: for artifact upload
+          Write-Host "Moving build artifacts from D: to C: for upload..."
+          Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
+      
+      - name: Upload Windows JDK Build Artifact
+        if: steps.check_build_condition.outputs.needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
+          path: staging_artifact/
