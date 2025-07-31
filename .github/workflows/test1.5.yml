@@ -92,9 +92,10 @@ jobs:
       # Use exact MSYS2 config from Corretto
       - name: Install MSYS2
         if: steps.quick_check.outputs.needs_build == 'true'
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@v2.28.0
         with:
           install: 'autoconf tar unzip zip make'
+          update: true
           path-type: minimal
           location: D:\msys2_minimal
       
