@@ -140,17 +140,23 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
-          $jdkSourcePath = Get-ChildItem -Path "build\*\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          $jdkSourcePath = Get-ChildItem -Path "build/*/images/jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $jdkSourcePath) {
+            $jdkSourcePath = Get-ChildItem -Path "build/*/jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          }
+    
+          if (-not $jdkSourcePath) {
+            Write-Error "Could not find JDK build output directory"
+            exit 1
+          }
           $releaseFile = Join-Path $jdkSourcePath "release"
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
-
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
           $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
           New-Item -ItemType Directory -Path $fullTargetPathInStaging -Force | Out-Null
-
           Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
 
       - name: Upload Windows JDK Build Artifact
