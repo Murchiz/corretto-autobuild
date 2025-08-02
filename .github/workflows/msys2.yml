@@ -140,7 +140,7 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
-          $jdkSourcePath = Get-ChildItem -Path "build\*\images\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          $jdkSourcePath = Get-ChildItem -Path "build\*\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
           $releaseFile = Join-Path $jdkSourcePath "release"
           $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
           $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
