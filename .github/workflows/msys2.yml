@@ -123,7 +123,7 @@ jobs:
                       --enable-javac-server \
                       --disable-full-docs
 
-      - name: Build Corretto make images Optimized
+      - name: Build Corretto make images
         if: steps.quick_check.outputs.needs_build == 'true'
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: msys2 {0}
@@ -132,7 +132,7 @@ jobs:
           export TMP=/d/tmp
           export TEMP=/d/tmp
 
-          make JOBS=${{ env.BUILD_JOBS }} images
+          make JOBS=${{ env.BUILD_JOBS }} jdk
 
       - name: Prepare Artifact Structure
         if: steps.quick_check.outputs.needs_build == 'true'
