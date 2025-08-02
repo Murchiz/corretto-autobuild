@@ -140,31 +140,60 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
-          $jdkSourcePath = Get-ChildItem -Path "build/*/images/jdk" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $jdkSourcePath) {
-            $jdkSourcePath = Get-ChildItem -Path "build/*/jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
+          # Find the JDK build output directory
+          $buildDir = Get-ChildItem -Path "build" -Directory | Select-Object -First 1
+          if (-not $buildDir) {
+            throw "Build directory not found"
           }
-    
-          if (-not $jdkSourcePath) {
-            Write-Error "Could not find JDK build output directory"
-            exit 1
+          
+          $jdkPath = Join-Path $buildDir.FullName "jdk"
+          if (-not (Test-Path $jdkPath)) {
+            throw "JDK directory not found at: $jdkPath"
           }
-          $releaseFile = Join-Path $jdkSourcePath "release"
-          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
-          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
-          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
-          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
+          
+          Write-Host "Found JDK at: $jdkPath"
+          
+          # Extract version from release file
+          $releaseFile = Join-Path $jdkPath "release"
+          if (-not (Test-Path $releaseFile)) {
+            throw "Release file not found at: $releaseFile"
+          }
+          
+          $releaseContent = Get-Content $releaseFile -Raw
+          $javaVersion = if ($releaseContent -match 'JAVA_VERSION="([^"]+)"') { 
+            $matches[1] 
+          } else { 
+            throw "Could not extract JAVA_VERSION from release file" 
+          }
+          
+          Write-Host "Extracted Java version: $javaVersion"
+          echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $env:GITHUB_OUTPUT
+          
+          # Create staging directory structure
+          $stagingDir = Join-Path $env:WORKSPACE_ROOT "staging_artifact"
           $targetDirName = "corretto-21-lilliput-${javaVersion}"
-          $fullTargetPathInStaging = Join-Path $stagingDir $targetDirName
-          New-Item -ItemType Directory -Path $fullTargetPathInStaging -Force | Out-Null
-          Move-Item -Path (Join-Path $jdkSourcePath "*") -Destination $fullTargetPathInStaging -Force
+          $fullTargetPath = Join-Path $stagingDir $targetDirName
+          
+          Write-Host "Creating staging directory: $fullTargetPath"
+          New-Item -ItemType Directory -Path $fullTargetPath -Force | Out-Null
+          
+          # Copy JDK contents to staging directory
+          Write-Host "Copying JDK contents from $jdkPath to $fullTargetPath"
+          Copy-Item -Path "$jdkPath\*" -Destination $fullTargetPath -Recurse -Force
+          
+          # Verify the copy
+          $itemCount = (Get-ChildItem -Path $fullTargetPath -Recurse | Measure-Object).Count
+          Write-Host "Copied $itemCount items to staging directory"
+          
+          # Store staging directory path for artifact upload
+          echo "STAGING_DIR=$stagingDir" >> $env:GITHUB_ENV
 
       - name: Upload Windows JDK Build Artifact
         if: steps.quick_check.outputs.needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: corretto-21-lilliput-${{ steps.prepare_artifact.outputs.JAVA_VERSION_EXTRACTED }}-windows-x64-jdk
-          path: staging_artifact/
+          path: ${{ env.STAGING_DIR }}/
 
       - name: Update GitHub Repository Variable with PAT
         if: steps.quick_check.outputs.needs_build == 'true'
@@ -174,3 +203,4 @@ jobs:
         run: |
           gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
+
