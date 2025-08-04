@@ -140,14 +140,30 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
-          # Find the JDK build output directory
-          $buildDir = Get-ChildItem -Path "build" -Directory | Select-Object -First 1
+          # Find the actual build output directory (not .configure-support)
+          $buildOutputDirs = Get-ChildItem -Path "build" -Directory | 
+            Where-Object { $_.Name -notlike ".*" -and $_.Name -match "windows.*release" }
+          
+          if ($buildOutputDirs.Count -eq 0) {
+            # If no windows*release pattern found, look for any non-hidden directory with 'jdk' subdirectory
+            $buildOutputDirs = Get-ChildItem -Path "build" -Directory | 
+              Where-Object { 
+                $_.Name -notlike ".*" -and 
+                (Test-Path (Join-Path $_.FullName "jdk"))
+              }
+          }
+          
+          $buildDir = $buildOutputDirs | Select-Object -First 1
           if (-not $buildDir) {
-            throw "Build directory not found"
+            Write-Host "Contents of build directory:"
+            Get-ChildItem -Path "build" | ForEach-Object { Write-Host $_.Name }
+            throw "Build output directory not found"
           }
           
           $jdkPath = Join-Path $buildDir.FullName "jdk"
           if (-not (Test-Path $jdkPath)) {
+            Write-Host "Contents of $($buildDir.FullName):"
+            Get-ChildItem -Path $buildDir.FullName | ForEach-Object { Write-Host $_.Name }
             throw "JDK directory not found at: $jdkPath"
           }
           
@@ -203,4 +219,5 @@ jobs:
         run: |
           gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
+
 
