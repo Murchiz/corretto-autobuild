@@ -140,70 +140,65 @@ jobs:
         working-directory: ${{ env.CORRETTO_SOURCE_DIR }}
         shell: pwsh
         run: |
-          # Find the actual build output directory (not .configure-support)
-          $buildOutputDirs = Get-ChildItem -Path "build" -Directory | 
-            Where-Object { $_.Name -notlike ".*" -and $_.Name -match "windows.*release" }
+          # Find the actual build output directory
+          $jdkPath = Get-ChildItem -Path "build\*\jdk" -Directory | 
+            Where-Object { $_.Parent.Name -notlike ".*" } | 
+            Select-Object -First 1 -ExpandProperty FullName
           
-          if ($buildOutputDirs.Count -eq 0) {
-            # If no windows*release pattern found, look for any non-hidden directory with 'jdk' subdirectory
-            $buildOutputDirs = Get-ChildItem -Path "build" -Directory | 
-              Where-Object { 
-                $_.Name -notlike ".*" -and 
-                (Test-Path (Join-Path $_.FullName "jdk"))
-              }
-          }
-          
-          $buildDir = $buildOutputDirs | Select-Object -First 1
-          if (-not $buildDir) {
+          if (-not $jdkPath) {
             Write-Host "Contents of build directory:"
-            Get-ChildItem -Path "build" | ForEach-Object { Write-Host $_.Name }
-            throw "Build output directory not found"
-          }
-          
-          $jdkPath = Join-Path $buildDir.FullName "jdk"
-          if (-not (Test-Path $jdkPath)) {
-            Write-Host "Contents of $($buildDir.FullName):"
-            Get-ChildItem -Path $buildDir.FullName | ForEach-Object { Write-Host $_.Name }
-            throw "JDK directory not found at: $jdkPath"
+            Get-ChildItem -Path "build" -Recurse -Directory | ForEach-Object { Write-Host $_.FullName }
+            throw "JDK directory not found in build output"
           }
           
           Write-Host "Found JDK at: $jdkPath"
           
-          # Extract version from release file
+          # Find and read the release file
           $releaseFile = Join-Path $jdkPath "release"
           if (-not (Test-Path $releaseFile)) {
+            Write-Host "Contents of JDK directory:"
+            Get-ChildItem -Path $jdkPath | ForEach-Object { Write-Host $_.Name }
             throw "Release file not found at: $releaseFile"
           }
           
-          # Read and parse the release file
-          $releaseContent = Get-Content $releaseFile -Raw
-          Write-Host "Release file content (first 500 chars):"
-          Write-Host $releaseContent.Substring(0, [Math]::Min(500, $releaseContent.Length))
+          Write-Host "Reading release file..."
+          $releaseLines = Get-Content $releaseFile
+          Write-Host "Release file contents:"
+          $releaseLines | Select-Object -First 20 | ForEach-Object { Write-Host $_ }
           
-          # Try different patterns to extract Java version
+          # Extract Java version - try multiple approaches
           $javaVersion = $null
           
-          # Pattern 1: JAVA_VERSION="21.0.x"
-          if ($releaseContent -match 'JAVA_VERSION\s*=\s*"([^"]+)"') {
-            $javaVersion = $matches[1]
-          }
-          # Pattern 2: JAVA_VERSION='21.0.x'
-          elseif ($releaseContent -match "JAVA_VERSION\s*=\s*'([^']+)'") {
-            $javaVersion = $matches[1]
-          }
-          # Pattern 3: JAVA_VERSION=21.0.x (no quotes)
-          elseif ($releaseContent -match 'JAVA_VERSION\s*=\s*([^\s\r\n]+)') {
-            $javaVersion = $matches[1]
+          foreach ($line in $releaseLines) {
+            if ($line -match '^JAVA_VERSION\s*=\s*["'']?([^"'']+)["'']?\s*$') {
+              $javaVersion = $matches[1].Trim()
+              break
+            }
           }
           
           if (-not $javaVersion) {
-            # Try to find any line with version-like pattern
-            if ($releaseContent -match '21\.\d+\.\d+') {
-              $javaVersion = $matches[0]
-              Write-Host "Found version pattern: $javaVersion"
-            } else {
-              throw "Could not extract JAVA_VERSION from release file. Please check the file format."
+            # Try to extract from a property-style format
+            $releaseProps = @{}
+            foreach ($line in $releaseLines) {
+              if ($line -match '^([^=]+)=(.+)$') {
+                $key = $matches[1].Trim()
+                $value = $matches[2].Trim().Trim('"', "'")
+                $releaseProps[$key] = $value
+              }
             }
+            
+            if ($releaseProps.ContainsKey('JAVA_VERSION')) {
+              $javaVersion = $releaseProps['JAVA_VERSION']
+            }
+          }
+          
+          if (-not $javaVersion) {
+            Write-Host "Failed to find JAVA_VERSION in release file."
+            Write-Host "Available properties:"
+            $releaseProps.GetEnumerator() | Sort-Object Name | ForEach-Object { 
+              Write-Host "$($_.Key) = $($_.Value)" 
+            }
+            throw "Could not extract JAVA_VERSION from release file"
           }
           
           Write-Host "Extracted Java version: $javaVersion"
@@ -218,7 +213,7 @@ jobs:
           New-Item -ItemType Directory -Path $fullTargetPath -Force | Out-Null
           
           # Copy JDK contents to staging directory
-          Write-Host "Copying JDK contents from $jdkPath to $fullTargetPath"
+          Write-Host "Copying JDK contents to staging directory..."
           Copy-Item -Path "$jdkPath\*" -Destination $fullTargetPath -Recurse -Force
           
           # Verify the copy
@@ -243,6 +238,7 @@ jobs:
         run: |
           gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
+
 
 
 
