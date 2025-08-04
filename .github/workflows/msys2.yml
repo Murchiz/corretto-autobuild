@@ -175,11 +175,35 @@ jobs:
             throw "Release file not found at: $releaseFile"
           }
           
+          # Read and parse the release file
           $releaseContent = Get-Content $releaseFile -Raw
-          $javaVersion = if ($releaseContent -match 'JAVA_VERSION="([^"]+)"') { 
-            $matches[1] 
-          } else { 
-            throw "Could not extract JAVA_VERSION from release file" 
+          Write-Host "Release file content (first 500 chars):"
+          Write-Host $releaseContent.Substring(0, [Math]::Min(500, $releaseContent.Length))
+          
+          # Try different patterns to extract Java version
+          $javaVersion = $null
+          
+          # Pattern 1: JAVA_VERSION="21.0.x"
+          if ($releaseContent -match 'JAVA_VERSION\s*=\s*"([^"]+)"') {
+            $javaVersion = $matches[1]
+          }
+          # Pattern 2: JAVA_VERSION='21.0.x'
+          elseif ($releaseContent -match "JAVA_VERSION\s*=\s*'([^']+)'") {
+            $javaVersion = $matches[1]
+          }
+          # Pattern 3: JAVA_VERSION=21.0.x (no quotes)
+          elseif ($releaseContent -match 'JAVA_VERSION\s*=\s*([^\s\r\n]+)') {
+            $javaVersion = $matches[1]
+          }
+          
+          if (-not $javaVersion) {
+            # Try to find any line with version-like pattern
+            if ($releaseContent -match '21\.\d+\.\d+') {
+              $javaVersion = $matches[0]
+              Write-Host "Found version pattern: $javaVersion"
+            } else {
+              throw "Could not extract JAVA_VERSION from release file. Please check the file format."
+            }
           }
           
           Write-Host "Extracted Java version: $javaVersion"
@@ -219,5 +243,6 @@ jobs:
         run: |
           gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
+
 
 
