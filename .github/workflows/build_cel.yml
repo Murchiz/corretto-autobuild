@@ -38,8 +38,24 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew build -Ptarget_versions="${{ github.event.inputs.minecraft_version }}" packageJar
 
+      - name: Determine artifact path
+        id: get_artifact_path
+        run: |
+          mc_version="${{ github.event.inputs.minecraft_version }}"
+          artifact_path=""
+          if [[ "$mc_version" == "1.12.2" || "$mc_version" == "1.10.2" ]]; then
+            artifact_path="forge122/build/libs/*.jar"
+          elif [[ "$mc_version" == "1.2.5" || "$mc_version" == "1.0.0-beta.7.3" || "$mc_version" == "1.0.0-beta.8.1" || "$mc_version" == "1.7.10" ]]; then
+            artifact_path="babric/build/libs/*.jar"
+          elif [[ "$mc_version" == "1.7.10" ]]; then
+            artifact_path="forge1710/build/libs/*.jar"
+          else
+            artifact_path="modern/build/libs/*.jar"
+          fi
+          echo "path=${artifact_path}" >> $GITHUB_OUTPUT
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: celeritas-${{ github.event.inputs.minecraft_version }}
-          path: '**/build/libs/*.jar'
+          path: ${{ steps.get_artifact_path.outputs.path }}
