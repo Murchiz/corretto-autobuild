@@ -162,43 +162,42 @@ jobs:
           }
           
           Write-Host "Reading release file..."
-          $releaseLines = Get-Content $releaseFile
-          Write-Host "Release file contents:"
-          $releaseLines | Select-Object -First 20 | ForEach-Object { Write-Host $_ }
+          $releaseContent = Get-Content $releaseFile -Raw
           
-          # Extract Java version - try multiple approaches
+          # Parse the release file into a hashtable
+          $releaseProps = @{}
+          foreach ($line in (Get-Content $releaseFile)) {
+            if ($line -match '^([^=]+)=(.+)$') {
+              $key = $matches[1].Trim()
+              $value = $matches[2].Trim().Trim('"', "'")
+              $releaseProps[$key] = $value
+            }
+          }
+          
+          # Extract Java version from JAVA_RUNTIME_VERSION
           $javaVersion = $null
-          
-          foreach ($line in $releaseLines) {
-            if ($line -match '^JAVA_VERSION\s*=\s*["'']?([^"'']+)["'']?\s*$') {
-              $javaVersion = $matches[1].Trim()
-              break
-            }
-          }
-          
-          if (-not $javaVersion) {
-            # Try to extract from a property-style format
-            $releaseProps = @{}
-            foreach ($line in $releaseLines) {
-              if ($line -match '^([^=]+)=(.+)$') {
-                $key = $matches[1].Trim()
-                $value = $matches[2].Trim().Trim('"', "'")
-                $releaseProps[$key] = $value
-              }
-            }
+          if ($releaseProps.ContainsKey('JAVA_RUNTIME_VERSION')) {
+            $runtimeVersion = $releaseProps['JAVA_RUNTIME_VERSION']
+            Write-Host "Found JAVA_RUNTIME_VERSION: $runtimeVersion"
             
-            if ($releaseProps.ContainsKey('JAVA_VERSION')) {
-              $javaVersion = $releaseProps['JAVA_VERSION']
+            # Extract version number (e.g., 21.0.9 from 21.0.9-internal-adhoc...)
+            if ($runtimeVersion -match '^(\d+\.\d+\.\d+)') {
+              $javaVersion = $matches[1]
             }
           }
           
+          # Fallback: try JAVA_VERSION if it exists
+          if (-not $javaVersion -and $releaseProps.ContainsKey('JAVA_VERSION')) {
+            $javaVersion = $releaseProps['JAVA_VERSION']
+          }
+          
           if (-not $javaVersion) {
-            Write-Host "Failed to find JAVA_VERSION in release file."
+            Write-Host "Failed to extract version from release file."
             Write-Host "Available properties:"
             $releaseProps.GetEnumerator() | Sort-Object Name | ForEach-Object { 
               Write-Host "$($_.Key) = $($_.Value)" 
             }
-            throw "Could not extract JAVA_VERSION from release file"
+            throw "Could not extract Java version from release file"
           }
           
           Write-Host "Extracted Java version: $javaVersion"
@@ -238,6 +237,7 @@ jobs:
         run: |
           gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
+
 
 
 
