@@ -38,6 +38,9 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew build -Ptarget_versions="${{ github.event.inputs.minecraft_version }}" packageJar
 
+      - name: List files in build directory
+        run: ls -R build
+
       - name: Determine artifact path
         id: get_artifact_path
         run: |
@@ -45,7 +48,7 @@ jobs:
           artifact_path=""
           if [[ "$mc_version" == "1.12.2" || "$mc_version" == "1.10.2" ]]; then
             artifact_path="forge122/build/libs/*.jar"
-          elif [[ "$mc_version" == "1.2.5" || "$mc_version" == "1.0.0-beta.7.3" || "$mc_version" == "1.0.0-beta.8.1" || "$mc_version" == "1.7.10" ]]; then
+          elif [[ "$mc_version" == "1.2.5" || "$mc_version" == "1.0.0-beta.7.3" || "$mc_version" == "1.0.0-beta.8.1" ]]; then
             artifact_path="babric/build/libs/*.jar"
           elif [[ "$mc_version" == "1.7.10" ]]; then
             artifact_path="forge1710/build/libs/*.jar"
