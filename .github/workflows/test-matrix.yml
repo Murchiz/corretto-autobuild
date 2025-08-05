@@ -1,4 +1,4 @@
-name: Build Corretto 21 lilliput-2 Msys2 edition - Performance Test Matrix
+name: Performance Test Matrix
 
 on:
   schedule:
