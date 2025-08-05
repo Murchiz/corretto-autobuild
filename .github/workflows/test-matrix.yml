@@ -1,6 +1,8 @@
-name: Corretto Test matrix
+name: Build Corretto 21 lilliput-2 Msys2 edition - Performance Test Matrix
 
 on:
+  schedule:
+    - cron: '0 5 * * 1'
   workflow_dispatch:
 
 env:
@@ -17,7 +19,7 @@ env:
 
 jobs:
   build_if_new_commits:
-    runs-on: windows-2025
+    runs-on: windows-2019
     permissions:
       contents: read
       actions: read
@@ -35,7 +37,7 @@ jobs:
             javac_server: true
           
           - name: "disk_d_optimized"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
@@ -44,7 +46,7 @@ jobs:
             javac_server: true
           
           - name: "max_parallel_jobs"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 4
             memory_size: 16384
             jobs: 8
@@ -53,7 +55,7 @@ jobs:
             javac_server: true
           
           - name: "conservative_memory"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 4
             memory_size: 12288
             jobs: 3
@@ -62,7 +64,7 @@ jobs:
             javac_server: true
           
           - name: "no_pch"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
@@ -71,7 +73,7 @@ jobs:
             javac_server: true
           
           - name: "no_javac_server"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
@@ -80,7 +82,7 @@ jobs:
             javac_server: false
           
           - name: "minimal_resources"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 2
             memory_size: 8192
             jobs: 2
@@ -89,7 +91,7 @@ jobs:
             javac_server: true
           
           - name: "max_jvm_memory"
-            build_dir: "C:"
+            build_dir: "D:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
