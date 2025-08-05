@@ -150,8 +150,11 @@ jobs:
           $jdkSourcePath = Get-ChildItem -Path "build\*\jdk" -Directory | Select-Object -First 1 -ExpandProperty FullName
           }
           $releaseFile = Join-Path $jdkSourcePath "release"
-          $releaseContent = Get-Content $releaseFile -Raw | ConvertFrom-StringData -Delimiter '='
-          $javaVersion = $releaseContent.JAVA_VERSION.Trim('"')
+          $runtimeVersion = Get-Content $releaseFile | 
+          Where-Object { $_ -match 'JAVA_RUNTIME_VERSION=' } | 
+          ForEach-Object { $_ -replace '.*="|".*', '' }
+
+          $javaVersion = if ($runtimeVersion -match '(\d+\.\d+\.\d+)') { $matches[1] } else { "unknown" }
           echo "JAVA_VERSION_EXTRACTED=$javaVersion" >> $GITHUB_OUTPUT
 
           $stagingDir = Join-Path $env:GITHUB_WORKSPACE "staging_artifact"
