@@ -132,7 +132,9 @@ jobs:
           export TMP=/d/tmp
           export TEMP=/d/tmp
 
-          make JOBS=${{ env.BUILD_JOBS }} jdk
+          make JOBS=${{ env.BUILD_JOBS }}
+
+          ls -la build/*/
 
       - name: Prepare Artifact Structure
         if: steps.quick_check.outputs.needs_build == 'true'
@@ -237,6 +239,7 @@ jobs:
         run: |
           gh variable set "${{ env.GITHUB_VARIABLE_NAME }}" --body "${NEW_SHA_TO_SAVE}" --repo "${{ github.repository }}"
         shell: bash
+
 
 
 
