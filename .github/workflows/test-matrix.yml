@@ -19,7 +19,7 @@ env:
 
 jobs:
   build_if_new_commits:
-    runs-on: windows-2022
+    runs-on: windows-2025
     permissions:
       contents: read
       actions: read
@@ -37,7 +37,7 @@ jobs:
             javac_server: true
           
           - name: "disk_d_optimized"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
@@ -46,7 +46,7 @@ jobs:
             javac_server: true
           
           - name: "max_parallel_jobs"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 4
             memory_size: 16384
             jobs: 8
@@ -55,7 +55,7 @@ jobs:
             javac_server: true
           
           - name: "conservative_memory"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 4
             memory_size: 12288
             jobs: 3
@@ -64,7 +64,7 @@ jobs:
             javac_server: true
           
           - name: "no_pch"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
@@ -73,7 +73,7 @@ jobs:
             javac_server: true
           
           - name: "no_javac_server"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
@@ -82,7 +82,7 @@ jobs:
             javac_server: false
           
           - name: "minimal_resources"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 2
             memory_size: 8192
             jobs: 2
@@ -91,7 +91,7 @@ jobs:
             javac_server: true
           
           - name: "max_jvm_memory"
-            build_dir: "D:"
+            build_dir: "C:"
             num_cores: 4
             memory_size: 16384
             jobs: 4
