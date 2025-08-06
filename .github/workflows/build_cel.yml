@@ -77,14 +77,15 @@ jobs:
         
         echo "Final target version will be: ${{ github.event.inputs.minecraft_version == 'use_custom' && github.event.inputs.custom_version || github.event.inputs.minecraft_version }}"
     
-    # Cache the entire build directory for faster subsequent builds
     - name: Cache build outputs
       uses: actions/cache@v4
       with:
         path: |
-          build/
+          build/*
+          !build/libs/
           .gradle/
           versions/*/build/
+          !versions/*/build/libs/
         key: ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-${{ steps.version.outputs.cache_key }}
         restore-keys: |
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-all
