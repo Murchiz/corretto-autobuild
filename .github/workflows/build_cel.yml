@@ -57,15 +57,25 @@ jobs:
     - name: Determine version to build
       id: version
       run: |
-        if [ "${{ github.event.inputs.minecraft_version }}" = "use_custom" ] && [ -n "${{ github.event.inputs.custom_version }}" ]; then
-          echo "target_version=${{ github.event.inputs.custom_version }}" >> $GITHUB_OUTPUT
-          echo "cache_key=custom-${{ github.event.inputs.custom_version }}" >> $GITHUB_OUTPUT
-        elif [ "${{ github.event.inputs.minecraft_version }}" = "use_custom" ] && [ -z "${{ github.event.inputs.custom_version }}" ]; then
-          echo "Error: Selected 'use_custom' but no custom version provided"
-          exit 1
+        echo "Selected from dropdown: ${{ github.event.inputs.minecraft_version }}"
+        echo "Custom version entered: ${{ github.event.inputs.custom_version }}"
+        
+        if [[ "${{ github.event.inputs.minecraft_version }}" == "use_custom" ]]; then
+          if [[ -n "${{ github.event.inputs.custom_version }}" ]]; then
+            echo "Using custom version: ${{ github.event.inputs.custom_version }}"
+            echo "target_version=${{ github.event.inputs.custom_version }}" >> $GITHUB_OUTPUT
+            echo "cache_key=custom-$(echo '${{ github.event.inputs.custom_version }}' | sed 's/[^a-zA-Z0-9.-]/-/g')" >> $GITHUB_OUTPUT
+          else
+            echo "Error: Selected 'use_custom' but no custom version provided"
+            exit 1
+          fi
         else
+          echo "Using dropdown selection: ${{ github.event.inputs.minecraft_version }}"
           echo "target_version=${{ github.event.inputs.minecraft_version }}" >> $GITHUB_OUTPUT
           echo "cache_key=${{ github.event.inputs.minecraft_version }}" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "Final target version: $(cat $GITHUB_OUTPUT | grep target_version)"
         fi
     
     # Cache the entire build directory for faster subsequent builds
@@ -84,7 +94,9 @@ jobs:
       
     - name: Build for specific version
       if: ${{ steps.version.outputs.target_version != 'all' }}
-      run: ./gradlew -Ptarget_versions="${{ steps.version.outputs.target_version }}" packageJar
+      run: | 
+        echo "Building for version: ${{ steps.version.outputs.target_version }}"
+        ./gradlew -Ptarget_versions="${{ steps.version.outputs.target_version }}" packageJar
       
     - name: Build for all versions
       if: ${{ steps.version.outputs.target_version == 'all' }}
