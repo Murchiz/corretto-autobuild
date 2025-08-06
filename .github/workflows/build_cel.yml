@@ -4,13 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       minecraft_version:
-        description: 'Minecraft version to build for'
-        required: true
+        description: 'Minecraft version (from list)'
+        required: false
         type: choice
         options:
+          - 'use_custom'
           - '1.21.1'
-          - '1.20.6'
-          - '1.20.4'
           - '1.20.1'
           - '1.19.4'
           - '1.19.2'
@@ -26,30 +25,49 @@ on:
           - '1.9.4'
           - '1.8.9'
           - '1.7.10'
-          - '1.2.5'
           - 'all'
         default: '1.20.1'
+      
+      custom_version:
+        description: 'Custom version (e.g., 1.20.3 or >=1.18 <1.20)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Clone repository
-      run: git clone https://git.taumc.org/embeddedt/celeritas.git .
-      shell: pwsh
+    - name: Checkout repository
+      uses: actions/checkout@v4
       
     - name: Set up JDK 21
       uses: actions/setup-java@v4
       with:
-        java-version: '22'
+        java-version: '21'
         distribution: 'graalvm'
-
+    
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
       with:
         cache-read-only: false
     
+    - name: Determine version to build
+      id: version
+      run: |
+        if [ "${{ github.event.inputs.minecraft_version }}" = "use_custom" ] && [ -n "${{ github.event.inputs.custom_version }}" ]; then
+          echo "target_version=${{ github.event.inputs.custom_version }}" >> $GITHUB_OUTPUT
+          echo "cache_key=custom-${{ github.event.inputs.custom_version }}" >> $GITHUB_OUTPUT
+        elif [ "${{ github.event.inputs.minecraft_version }}" = "use_custom" ] && [ -z "${{ github.event.inputs.custom_version }}" ]; then
+          echo "Error: Selected 'use_custom' but no custom version provided"
+          exit 1
+        else
+          echo "target_version=${{ github.event.inputs.minecraft_version }}" >> $GITHUB_OUTPUT
+          echo "cache_key=${{ github.event.inputs.minecraft_version }}" >> $GITHUB_OUTPUT
+        fi
+    
+    # Cache the entire build directory for faster subsequent builds
     - name: Cache build outputs
       uses: actions/cache@v4
       with:
@@ -57,23 +75,23 @@ jobs:
           build/
           .gradle/
           versions/*/build/
-        key: ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-${{ github.event.inputs.minecraft_version }}
+        key: ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-${{ steps.version.outputs.cache_key }}
         restore-keys: |
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-all
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-
           ${{ runner.os }}-celeritas-build-
       
     - name: Build for specific version
-      if: ${{ github.event.inputs.minecraft_version != 'all' }}
-      run: ./gradlew -Ptarget_versions="${{ github.event.inputs.minecraft_version }}" packageJar
+      if: ${{ steps.version.outputs.target_version != 'all' }}
+      run: ./gradlew -Ptarget_versions="${{ steps.version.outputs.target_version }}" packageJar
       
     - name: Build for all versions
-      if: ${{ github.event.inputs.minecraft_version == 'all' }}
+      if: ${{ steps.version.outputs.target_version == 'all' }}
       run: ./gradlew packageJar
       
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: celeritas-${{ github.event.inputs.minecraft_version }}-${{ github.run_number }}
+        name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
         path: build/libs/**/*.jar
         if-no-files-found: error
