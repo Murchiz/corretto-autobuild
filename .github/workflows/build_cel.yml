@@ -57,5 +57,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: celeritas-${{ github.event.inputs.minecraft_version }}-${{ github.run_number }}
-        path: build/libs/*.jar
+        path: build/libs/**/*.jar
         if-no-files-found: error
