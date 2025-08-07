@@ -35,7 +35,9 @@ jobs:
       - name: Apply Patches
         run: ./gradlew applyAllPatches --stacktrace
       - name: Build
-        run: ./gradlew build
+        run: |
+          ./gradlew build
+          ls
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
