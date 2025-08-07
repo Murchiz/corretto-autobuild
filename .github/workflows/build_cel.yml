@@ -92,6 +92,14 @@ jobs:
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-
           ${{ runner.os }}-celeritas-build-
       
+    - name: Clean all previous JAR files
+      run: |
+        echo "Cleaning all previous JAR files..."
+        find build/libs -name "*.jar" -type f -delete 2>/dev/null || true
+        find versions -name "*.jar" -type f -delete 2>/dev/null || true
+        # Also clean subdirectories under build/libs
+        rm -rf build/libs/*/ 2>/dev/null || true
+
     - name: Build for specific version
       if: ${{ steps.version.outputs.target_version != 'all' }}
       run: | 
