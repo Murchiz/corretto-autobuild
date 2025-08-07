@@ -85,24 +85,11 @@ jobs:
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-
           ${{ runner.os }}-celeritas-build-
       
-    - name: Debug - List existing JARs before clean
+    - name: Clean output directory
       run: |
-        echo "=== Existing JARs before clean ==="
-        find . -name "*.jar" -type f | grep -E "(build/libs|versions/.*/build)" || echo "No JARs found"
-
-    - name: Clean build directory
-      run: |
-        echo "Running Gradle clean..."
-        ./gradlew clean
-        # Also manually ensure libs directories are empty
-        rm -rf build/libs
-        rm -rf versions/*/build/libs
-        mkdir -p build/libs
-
-    - name: Debug - List JARs after clean
-      run: |
-        echo "=== JARs after clean (should be empty) ==="
-        find . -name "*.jar" -type f | grep -E "(build/libs|versions/.*/build)" || echo "No JARs found"
+        echo "Cleaning output directory..."
+        rm -rf build/libs/*
+        echo "Output directory cleaned"
 
     - name: Build for specific version
       if: ${{ steps.version.outputs.target_version != 'all' }}
