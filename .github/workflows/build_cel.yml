@@ -103,9 +103,18 @@ jobs:
         SHORT_VERSION=$(echo "$VERSION" | sed 's/^1\.//')
         echo "short_version=$SHORT_VERSION" >> $GITHUB_OUTPUT
     
-    - name: Upload artifacts
+    - name: Upload artifacts for specific version
+      if: ${{ steps.version.outputs.target_version != 'all' }}
       uses: actions/upload-artifact@v4
       with:
         name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
         path: build/libs/**/*mc${{ steps.filter_version.outputs.short_version }}*.jar
+        if-no-files-found: error
+    
+    - name: Upload artifacts for all versions
+      if: ${{ steps.version.outputs.target_version == 'all' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
+        path: build/libs/**/*.jar
         if-no-files-found: error
