@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       minecraft_version:
-        description: 'Minecraft version (from list)'
-        required: false
+        description: 'Minecraft version'
+        required: true
         type: choice
         options:
-          - 'use_custom'
+          - 'all'
           - '1.21.8'
           - '1.21.1'
           - '1.20.1'
@@ -18,14 +18,7 @@ on:
           - '1.2.5'
           - '1.0.0-beta.8.1'
           - '1.0.0-beta.7.3'
-          - 'all'
         default: 'all'
-      
-      custom_version:
-        description: 'Custom version (e.g., 1.20.3 or >=1.18 <1.20)'
-        required: false
-        type: string
-        default: ''
 
 jobs:
   build:
@@ -47,29 +40,6 @@ jobs:
       with:
         cache-read-only: false
     
-    - name: Determine version to build
-      id: version
-      run: |
-        echo "Selected from dropdown: ${{ github.event.inputs.minecraft_version }}"
-        echo "Custom version entered: ${{ github.event.inputs.custom_version }}"
-        
-        if [[ "${{ github.event.inputs.minecraft_version }}" == "use_custom" ]]; then
-          if [[ -n "${{ github.event.inputs.custom_version }}" ]]; then
-            echo "Using custom version: ${{ github.event.inputs.custom_version }}"
-            echo "target_version=${{ github.event.inputs.custom_version }}" >> $GITHUB_OUTPUT
-            echo "cache_key=custom-$(echo '${{ github.event.inputs.custom_version }}' | sed 's/[^a-zA-Z0-9.-]/-/g')" >> $GITHUB_OUTPUT
-          else
-            echo "Error: Selected 'use_custom' but no custom version provided"
-            exit 1
-          fi
-        else
-          echo "Using dropdown selection: ${{ github.event.inputs.minecraft_version }}"
-          echo "target_version=${{ github.event.inputs.minecraft_version }}" >> $GITHUB_OUTPUT
-          echo "cache_key=${{ github.event.inputs.minecraft_version }}" >> $GITHUB_OUTPUT
-        fi
-        
-        echo "Final target version will be: ${{ github.event.inputs.minecraft_version == 'use_custom' && github.event.inputs.custom_version || github.event.inputs.minecraft_version }}"
-    
     - name: Cache build outputs
       uses: actions/cache@v4
       with:
@@ -79,26 +49,27 @@ jobs:
           .gradle/
           versions/*/build/
           !versions/*/build/libs/
-        key: ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-${{ steps.version.outputs.cache_key }}
+        key: ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-${{ github.event.inputs.minecraft_version }}
         restore-keys: |
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-all
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-
           ${{ runner.os }}-celeritas-build-
       
     - name: Build for specific version
-      if: ${{ steps.version.outputs.target_version != 'all' }}
+      if: ${{ github.event.inputs.minecraft_version != 'all' }}
       run: | 
-        echo "Building for version: ${{ steps.version.outputs.target_version }}"
-        ./gradlew -Ptarget_versions="${{ steps.version.outputs.target_version }}" packageJar
+        echo "Building for version: ${{ github.event.inputs.minecraft_version }}"
+        ./gradlew -Ptarget_versions="${{ github.event.inputs.minecraft_version }}" packageJar
       
     - name: Build for all versions
-      if: ${{ steps.version.outputs.target_version == 'all' }}
+      if: ${{ github.event.inputs.minecraft_version == 'all' }}
       run: ./gradlew packageJar
       
     - name: Determine version for filtering
+      if: ${{ github.event.inputs.minecraft_version != 'all' }}
       id: filter_version
       run: |
-        VERSION="${{ steps.version.outputs.target_version }}"
+        VERSION="${{ github.event.inputs.minecraft_version }}"
         
         # Check if it's a beta version
         if [[ "$VERSION" == *"beta"* ]]; then
@@ -114,17 +85,17 @@ jobs:
         fi
     
     - name: Upload artifacts for specific version
-      if: ${{ steps.version.outputs.target_version != 'all' }}
+      if: ${{ github.event.inputs.minecraft_version != 'all' }}
       uses: actions/upload-artifact@v4
       with:
-        name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
+        name: celeritas-${{ github.event.inputs.minecraft_version }}-${{ github.run_number }}
         path: build/libs/**/*mc${{ steps.filter_version.outputs.short_version }}*.jar
         if-no-files-found: error
     
     - name: Upload artifacts for all versions
-      if: ${{ steps.version.outputs.target_version == 'all' }}
+      if: ${{ github.event.inputs.minecraft_version == 'all' }}
       uses: actions/upload-artifact@v4
       with:
-        name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
+        name: celeritas-all-${{ github.run_number }}
         path: build/libs/**/*.jar
         if-no-files-found: error
