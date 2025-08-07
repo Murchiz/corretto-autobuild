@@ -102,4 +102,3 @@ jobs:
         path: |
           build/libs/**/*mc${{ steps.version.outputs.target_version | replace('.', '') | substring(1) }}*.jar
         if-no-files-found: error
-          build/libs/**/*mc$(echo ${{ steps.version.outputs.target_version }} | tr -d '.')*.jar
