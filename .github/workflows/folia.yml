@@ -37,9 +37,8 @@ jobs:
       - name: Build
         run: |
           ./gradlew build
-          ls
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
           name: folia-${{ github.event.choice.minecraft_version }}
-          path: paper-server/build/libs
+          path: folia-server/build/libs
