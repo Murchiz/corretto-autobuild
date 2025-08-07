@@ -95,9 +95,17 @@ jobs:
       if: ${{ steps.version.outputs.target_version == 'all' }}
       run: ./gradlew packageJar
       
+    - name: Determine version for filtering
+      id: filter_version
+      run: |
+        VERSION="${{ steps.version.outputs.target_version }}"
+        # Convert 1.20.1 to 20.1, 1.21.8 to 21.8, etc.
+        SHORT_VERSION=$(echo "$VERSION" | sed 's/^1\.//')
+        echo "short_version=$SHORT_VERSION" >> $GITHUB_OUTPUT
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
-        path: build/libs/**/*mc${{ steps.version.outputs.target_version | replace('.', '') | substring(1) }}*.jar
+        path: build/libs/**/*mc${{ steps.filter_version.outputs.short_version }}*.jar
         if-no-files-found: error
