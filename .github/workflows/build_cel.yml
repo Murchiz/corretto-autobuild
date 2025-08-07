@@ -9,22 +9,15 @@ on:
         type: choice
         options:
           - 'use_custom'
+          - '1.21.8'
           - '1.21.1'
           - '1.20.1'
-          - '1.19.4'
-          - '1.19.2'
-          - '1.18.2'
-          - '1.17.1'
-          - '1.16.5'
-          - '1.15.2'
-          - '1.14.4'
-          - '1.13.2'
           - '1.12.2'
-          - '1.11.2'
           - '1.10.2'
-          - '1.9.4'
-          - '1.8.9'
+          - '1.8.1'
           - '1.7.10'
+          - '1.7.3'
+          - '1.2.5'
           - 'all'
         default: '1.20.1'
       
@@ -92,13 +85,14 @@ jobs:
           ${{ runner.os }}-celeritas-build-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'stonecutter.gradle.kts') }}-
           ${{ runner.os }}-celeritas-build-
       
-    - name: Clean all previous JAR files
+    - name: Clean build directory
       run: |
-        echo "Cleaning all previous JAR files..."
-        find build/libs -name "*.jar" -type f -delete 2>/dev/null || true
-        find versions -name "*.jar" -type f -delete 2>/dev/null || true
-        # Also clean subdirectories under build/libs
-        rm -rf build/libs/*/ 2>/dev/null || true
+        echo "Running Gradle clean..."
+        ./gradlew clean
+        # Also manually ensure libs directories are empty
+        rm -rf build/libs
+        rm -rf versions/*/build/libs
+        mkdir -p build/libs
 
     - name: Build for specific version
       if: ${{ steps.version.outputs.target_version != 'all' }}
