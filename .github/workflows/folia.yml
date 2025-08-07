@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: "PaperMC/Folia"
-          ref: ver/${{ github.event.choice.minecraft_version }}
+          ref: ver/${{ github.event.inputs.minecraft_version }}
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
