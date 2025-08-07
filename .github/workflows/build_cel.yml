@@ -16,7 +16,7 @@ on:
           - '1.10.2'
           - '1.7.10'
           - '1.2.5'
-          - 'b1.8.1'
+          - '1.0.0-beta.8.1'
           - '1.0.0-beta.7.3'
           - 'all'
         default: 'all'
@@ -99,9 +99,19 @@ jobs:
       id: filter_version
       run: |
         VERSION="${{ steps.version.outputs.target_version }}"
-        # Convert 1.20.1 to 20.1, 1.21.8 to 21.8, etc.
-        SHORT_VERSION=$(echo "$VERSION" | sed 's/^1\.//')
-        echo "short_version=$SHORT_VERSION" >> $GITHUB_OUTPUT
+        
+        # Check if it's a beta version
+        if [[ "$VERSION" == *"beta"* ]]; then
+          # Extract the numeric part after beta (e.g., 1.0.0-beta.8.1 -> 1.8.1)
+          BETA_VERSION=$(echo "$VERSION" | sed 's/.*beta\./1./')
+          echo "short_version=b$BETA_VERSION" >> $GITHUB_OUTPUT
+          echo "Detected beta version: mcb$BETA_VERSION"
+        else
+          # Regular version - convert 1.20.1 to 20.1, 1.21.8 to 21.8, etc.
+          SHORT_VERSION=$(echo "$VERSION" | sed 's/^1\.//')
+          echo "short_version=$SHORT_VERSION" >> $GITHUB_OUTPUT
+          echo "Detected regular version: mc$SHORT_VERSION"
+        fi
     
     - name: Upload artifacts for specific version
       if: ${{ steps.version.outputs.target_version != 'all' }}
