@@ -99,6 +99,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: celeritas-${{ steps.version.outputs.cache_key }}-${{ github.run_number }}
-        path: |
-          build/libs/**/*mc${{ steps.version.outputs.target_version | replace('.', '') | substring(1) }}*.jar
+        path: build/libs/**/*mc${{ steps.version.outputs.target_version | replace('.', '') | substring(1) }}*.jar
         if-no-files-found: error
